@@ -1,0 +1,24 @@
+# Dune
+_build/
+.merlin
+*.install
+
+# opam
+_opam/
+
+# npm
+node_modules/
+example/*/package-lock.json
+
+# esy
+_esy/
+esy.lock
+
+# Bisect_ppx
+_coverage/
+
+# Humans
+scratch/
+
+# Editors
+.vscode/

@@ -1,0 +1,8 @@
+(library
+ (public_name hyper)
+ (wrapped false)
+ (modules hyper)
+ (libraries
+  dream
+ )
+ (preprocess (pps lwt_ppx)))
