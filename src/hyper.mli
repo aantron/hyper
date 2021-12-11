@@ -1,3 +1,10 @@
+(* This file is part of Hyper, released under the MIT license. See LICENSE.md
+   for details, or visit https://github.com/aantron/hyper.
+
+   Copyright 2021 Anton Bachin *)
+
+
+
 type request = Dream.request
 type response = Dream.response
 type 'a promise = 'a Lwt.t
