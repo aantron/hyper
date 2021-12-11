@@ -4,10 +4,9 @@
  (modules hyper)
  (libraries
   dream
-  dream.h2
   dream.h2-lwt-unix
-  dream.httpaf
   dream.httpaf-lwt-unix
+  hyper.http
   lwt
   lwt.unix
   lwt_ssl

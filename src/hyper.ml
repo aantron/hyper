@@ -169,7 +169,6 @@ let send_one_request connection_pool hyper_request =
   let scheme = Uri.scheme uri |> Option.get
   and host = Uri.host uri |> Option.get
   and port = Uri.port uri |> Option.value ~default:80
-  and method_ = Dream.method_ hyper_request
   and path_and_query = Uri.path_and_query uri
   in
   (* TODO Usage of Option.get above is temporary, though failure to provide a
@@ -287,175 +286,26 @@ let send_one_request connection_pool hyper_request =
   let%lwt (connection, id) =
     connection_pool.obtain endpoint hyper_request create in
 
-  let request connection =
-    match connection with
-    | Cleartext connection -> Httpaf_lwt_unix.Client.request connection
-    | SSL connection -> Httpaf_lwt_unix.Client.SSL.request connection
-    | H2 _connection -> assert false
-      (* TODO H2 is just a separate CF branch for now. *)
-    | WebSocket _stream -> assert false
-      (* TODO Ditto. *)
-  in
-
-  let response_promise, received_response = Lwt.wait () in
-
   begin match connection with
-  | Cleartext _ | SSL _ ->
-  (* TODO Did not indent the case body; quick and dirty "get it working"
-     version. *)
-
-  (* TODO Do we now want to store the verson? *)
-  let response_handler
-      (httpaf_response : Httpaf.Response.t)
-      httpaf_response_body =
-
-    (* TODO Using Dream.stream is awkward here, but it allows getting a response
-       with a stream inside it without immeidately having to modify Dream. Once
-       that is fixed, the Lwt.async can be removed, most likely. Dream.stream's
-       signature will change in Dream either way, so it's best to just hold off
-       tweaking it now. *)
-    Lwt.async begin fun () ->
-      let%lwt hyper_response =
-        Dream.stream
-          ~code:(Httpaf.Status.to_code httpaf_response.status)
-          ~headers:(Httpaf.Headers.to_list httpaf_response.headers)
-          (fun _response -> Lwt.return ())
-      in
-      Lwt.wakeup_later received_response hyper_response;
-
-      (* TODO A janky reader. Once Dream.stream is fixed and streams are fully
-         exposed, this can become a good pull-reader. *)
-      let rec receive () =
-        Httpaf.Body.Reader.schedule_read
-          httpaf_response_body
-          ~on_eof:(fun () ->
-            Lwt.async (fun () ->
-              let%lwt () = Dream.close_stream hyper_response in
-              connection_pool.all_done id hyper_response;
-              Lwt.return_unit))
-              (* TODO Make sure there is a way for the reader to abort reading
-                 the stream and yet still get the socket closed. *)
-          ~on_read:(fun buffer ~off ~len ->
-            Lwt.async (fun () ->
-              let%lwt () =
-                Dream.write_buffer
-                  ~offset:off ~length:len hyper_response buffer in
-              Lwt.return (receive ())))
-      in
-      receive ();
-
-      Lwt.return ()
-    end
-  in
-
-  let httpaf_request =
-    Httpaf.Request.create
-      ~headers:(Httpaf.Headers.of_list (Dream.all_headers hyper_request))
-      (Httpaf.Method.of_string (Dream.method_to_string method_))
-      path_and_query in
-  let httpaf_request_body =
-    request
+  | Cleartext connection ->
+    Hyper__http.Http1.http
+      ~write_done:(fun () -> connection_pool.write_done id)
+      ~all_done:(fun response -> connection_pool.all_done id response)
       connection
-      ~error_handler:(fun _ -> failwith "Protocol error") (* TODO *)
-      ~response_handler
-      httpaf_request in
+      hyper_request
 
-  let rec send () =
-    Dream.server_stream hyper_request
-    |> fun stream ->
-      Dream.next stream ~data ~close ~flush ~ping ~pong
+  | SSL connection ->
+    Hyper__http.Http1.https
+      ~write_done:(fun () -> connection_pool.write_done id)
+      ~all_done:(fun response -> connection_pool.all_done id response)
+      connection
+      hyper_request
 
-  (* TODO Implement flow control like on the server side, using flush. *)
-  and data buffer offset length _binary _fin =
-    Httpaf.Body.Writer.write_bigstring
-      httpaf_request_body
-      ~off:offset
-      ~len:length
-      buffer;
-    send ()
-
-  and close _code =
-    Httpaf.Body.Writer.close httpaf_request_body;
-    (* TODO This should only be called if reading is not yet done. *)
-    connection_pool.write_done id
-
-  and flush () = send ()
-  and ping _buffer _offset _length = send ()
-  and pong _buffer _offset _length = send ()
-
-  in
-
-  send ()
-
-  | H2 connection' ->
-    (* TODO This is a nasty duplicate of the above case, specialized for H2. See
-       comments above. *)
-    let response_handler (h2_response : H2.Response.t) h2_response_body =
-
-      Lwt.async begin fun () ->
-        let%lwt hyper_response =
-          Dream.stream
-            ~code:(H2.Status.to_code h2_response.status)
-            ~headers:(H2.Headers.to_list h2_response.headers)
-            (fun _response -> Lwt.return ())
-        in
-        Lwt.wakeup_later received_response hyper_response;
-
-        let rec receive () =
-          H2.Body.schedule_read
-            h2_response_body
-            ~on_eof:(fun () ->
-              Lwt.async (fun () ->
-                let%lwt () = Dream.close_stream hyper_response in
-                connection_pool.all_done id hyper_response;
-                Lwt.return_unit))
-            ~on_read:(fun buffer ~off ~len ->
-              Lwt.async (fun () ->
-                let%lwt () =
-                  Dream.write_buffer
-                    ~offset:off ~length:len hyper_response buffer in
-                Lwt.return (receive ())))
-        in
-        receive ();
-
-        Lwt.return ()
-      end
-    in
-
-    let h2_request =
-      H2.Request.create
-        ~headers:(H2.Headers.of_list (Dream.all_headers hyper_request))
-        ~scheme
-        (H2.Method.of_string (Dream.method_to_string method_))
-        path_and_query in
-    let h2_request_body =
-      H2_lwt_unix.Client.SSL.request
-        connection'
-        h2_request
-        ~error_handler:(fun _ -> failwith "Protocol error")
-        ~response_handler in
-
-    let rec send () =
-      Dream.server_stream hyper_request
-      |> fun stream ->
-        Dream.next stream ~data ~close ~flush ~ping ~pong
-
-    and data buffer offset length _binary _fin =
-      H2.Body.write_bigstring
-        h2_request_body
-        ~off:offset
-        ~len:length
-        buffer;
-      send ()
-
-    and close _code = H2.Body.close_writer h2_request_body
-    and flush () = send ()
-    and ping _buffer _offset _length = send ()
-    and pong _buffer _offset _length = send ()
-
-    in
-
-    send ()
+  | H2 connection ->
+    Hyper__http.Http2.https
+      ~all_done:(fun response -> connection_pool.all_done id response)
+      connection
+      hyper_request
 
   | WebSocket websocket ->
     let hyper_response = Dream.response "" in
@@ -465,10 +315,8 @@ let send_one_request connection_pool hyper_request =
     let hyper_response = {hyper_response with client_stream = websocket} in
     let hyper_response : Dream.response = Obj.magic hyper_response in
 
-    Lwt.wakeup_later received_response hyper_response
-  end;
-
-  response_promise
+    Lwt.return hyper_response
+  end
 
 
 
