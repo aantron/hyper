@@ -11,48 +11,50 @@
 let general make_request ~write_done ~all_done connection hyper_request =
   let response_promise, received_response = Lwt.wait () in
 
-  (* TODO Do we now want to store the verson? *)
   let response_handler
       (httpaf_response : Httpaf.Response.t)
       httpaf_response_body =
 
-    (* TODO Using Dream.stream is awkward here, but it allows getting a response
-       with a stream inside it without immeidately having to modify Dream. Once
-       that is fixed, the Lwt.async can be removed, most likely. Dream.stream's
-       signature will change in Dream either way, so it's best to just hold off
-       tweaking it now. *)
-    Lwt.async begin fun () ->
-      let%lwt hyper_response =
-        Dream.stream
-          ~code:(Httpaf.Status.to_code httpaf_response.status)
-          ~headers:(Httpaf.Headers.to_list httpaf_response.headers)
-          (fun _response -> Lwt.return ())
-      in
-      Lwt.wakeup_later received_response hyper_response;
+    (* TODO A bit annoying that this has to be bound first. *)
+    let hyper_response =
+      Dream.response
+        ~code:(Httpaf.Status.to_code httpaf_response.status)
+        ~headers:(Httpaf.Headers.to_list httpaf_response.headers)
+        ""
+    in
 
-      (* TODO A janky reader. Once Dream.stream is fixed and streams are fully
-         exposed, this can become a good pull-reader. *)
-      let rec receive () =
-        Httpaf.Body.Reader.schedule_read
-          httpaf_response_body
-          ~on_eof:(fun () ->
-            Lwt.async (fun () ->
-              let%lwt () = Dream.close_stream hyper_response in
-              all_done hyper_response;
-              Lwt.return_unit))
-              (* TODO Make sure there is a way for the reader to abort reading
-                 the stream and yet still get the socket closed. *)
-          ~on_read:(fun buffer ~off ~len ->
-            Lwt.async (fun () ->
-              let%lwt () =
-                Dream.write_buffer
-                  ~offset:off ~length:len hyper_response buffer in
-              Lwt.return (receive ())))
-      in
-      receive ();
+    (* TODO This code is very similar to the server side, for requests. *)
+    (* TODO Work out closing. In particular, in case of early close by the
+       reader, this should probably be treated as an error for the purposes of
+       connection pipelining, so the connection should not be reused because the
+       state of the response stream relative to expectations is unknown. That
+       can actually destroy request pipelining, since the next request may have
+       already started writing. Is this one of the reasons pipelining is
+       broken in most implementations? *)
+    let read ~data ~close ~flush:_ ~ping:_ ~pong:_ =
+      Httpaf.Body.Reader.schedule_read
+        httpaf_response_body
+        ~on_eof:(fun () ->
+          all_done hyper_response;
+          close 1000)
+        ~on_read:(fun buffer ~off ~len -> data buffer off len true false)
+    in
+    let close _code =
+      Httpaf.Body.Reader.close httpaf_response_body in
+    let client_stream =
+      Dream__pure.Stream.stream
+        (Dream__pure.Stream.reader ~read ~close)
+        Dream__pure.Stream.no_writer
+      |> Obj.magic (* TODO !!!! *)
+    in
 
-      Lwt.return ()
-    end
+    (* TODO Probably need more optional arguments. *)
+    let hyper_response =
+      hyper_response
+      |> Dream.with_client_stream client_stream
+    in
+
+    Lwt.wakeup_later received_response hyper_response
   in
 
   let httpaf_request =
