@@ -354,7 +354,7 @@ let send_one_request connection_pool hyper_request =
       httpaf_request in
 
   let rec send () =
-    Dream.body_stream hyper_request
+    Dream.server_stream hyper_request
     |> fun stream ->
       Dream.next stream ~data ~close ~flush ~ping ~pong
 
@@ -429,7 +429,7 @@ let send_one_request connection_pool hyper_request =
         ~response_handler in
 
     let rec send () =
-      Dream.body_stream hyper_request
+      Dream.server_stream hyper_request
       |> fun stream ->
         Dream.next stream ~data ~close ~flush ~ping ~pong
 
@@ -455,7 +455,7 @@ let send_one_request connection_pool hyper_request =
 
     let hyper_response : Dream__pure.Inmost.response =
       Obj.magic (hyper_response : Dream.response) in
-    let hyper_response = {hyper_response with body = websocket} in
+    let hyper_response = {hyper_response with client_stream = websocket} in
     let hyper_response : Dream.response = Obj.magic hyper_response in
 
     Lwt.wakeup_later received_response hyper_response

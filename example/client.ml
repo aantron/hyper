@@ -5,9 +5,9 @@ let send () =
   (* TODO This example is meant for running concurrently with example/w-echo. *)
   let request =
     Dream.request
-      ~method_:`GET
-      ~target:"ws://127.0.0.1:8080/websocket" ""
-      (* ~headers:["Transfer-Encoding", "chunked"] *)
+      ~method_:`POST
+      ~target:"http://127.0.0.1:8080/echo" "foo"
+      ~headers:["Transfer-Encoding", "chunked"]
   in
 
   (* TODO Note that this wrapper is not necessary if using, for example,
@@ -22,12 +22,12 @@ let send () =
   (* TODO Janky delay to give time for pipelining to intervene. *)
   (* let%lwt () = Lwt_unix.sleep 5. in *)
 
-  let%lwt () = Dream.write response "Hello?" in
+  (* let%lwt () = Dream.write response "Hello?" in *)
 
   let rec read () =
     (* TODO Use a higher-level reader once available. *)
     Dream.next
-      (Dream.body_stream response)
+      (Dream.client_stream response)
       ~data:(fun buffer offset length _binary _fin ->
         Bigstringaf.substring buffer ~off:offset ~len:length
         |> print_string;
