@@ -14,6 +14,16 @@ type request = Message.request
 type response = Message.response
 type 'a promise = 'a Lwt.t
 
+type method_ = Dream_pure.Method.method_
+
+
+
+let request ?method_ ?headers target =
+  Message.request ?method_ ~target ?headers Stream.null Stream.empty
+
+let body response =
+  Message.body response
+
 
 
 (* TODO Is this the right representation? *)
@@ -21,7 +31,7 @@ type connection =
   | Cleartext of Httpaf_lwt_unix.Client.t
   | SSL of Httpaf_lwt_unix.Client.SSL.t
   | H2 of H2_lwt_unix.Client.SSL.t (* TODO No h2c support. *)
-  | WebSocket of Stream.stream
+  (* | WebSocket of Stream.stream *)
     (* TODO NOTE WebSocket connections over HTTP/1.1 are currently
        single-use. We still go through the pool so as to give it the chance to
        refuse the connection based on the number of other connections to the
@@ -189,7 +199,7 @@ let send_one_request connection_pool hyper_request =
     | Cleartext connection -> Httpaf_lwt_unix.Client.shutdown connection
     | SSL connection -> Httpaf_lwt_unix.Client.SSL.shutdown connection
     | H2 connection -> H2_lwt_unix.Client.SSL.shutdown connection
-    | WebSocket stream -> Stream.close stream 1000; Lwt.return_unit
+    (* | WebSocket stream -> Stream.close stream 1000; Lwt.return_unit *)
   in
 
   let create (scheme, host, port) =
@@ -320,8 +330,8 @@ let send_one_request connection_pool hyper_request =
       connection
       hyper_request
 
-  | WebSocket _websocket ->
-    assert false
+  (* | WebSocket _websocket ->
+    assert false *)
     (* TODO Adapt and restore. *)
   end
 

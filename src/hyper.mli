@@ -14,6 +14,18 @@ type request = Message.request
 type response = Message.response
 type 'a promise = 'a Lwt.t
 
+(* TODO Import the whole method set, etc. *)
+type method_ = Dream_pure.Method.method_
+
+
+
+val request :
+  ?method_:[< method_ ] ->
+  ?headers:(string * string) list ->
+    string -> request
+
+val body : response -> string promise
+
 
 
 type connection_pool

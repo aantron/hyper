@@ -5,6 +5,8 @@ depends: [
   "dream-pure"
   "ocaml"
   "uri"
+
+  "lwt_ppx" {with-test}
 ]
 
 build: [
