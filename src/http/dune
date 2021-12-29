@@ -3,9 +3,9 @@
  (name hyper__http)
  (libraries
   dream
-  dream.h2
-  dream.h2-lwt-unix
-  dream.httpaf
-  dream.httpaf-lwt-unix
+  dream-httpaf.h2
+  dream-httpaf.h2-lwt-unix
+  dream-httpaf.httpaf
+  dream-httpaf.httpaf-lwt-unix
  )
  (preprocess (pps lwt_ppx)))

@@ -1,11 +1,15 @@
-(* This file is part of Dream, released under the MIT license. See LICENSE.md
-   for details, or visit https://github.com/aantron/dream.
+(* This file is part of Hyper, released under the MIT license. See LICENSE.md
+   for details, or visit https://github.com/aantron/hyper.
 
    Copyright 2021 Anton Bachin *)
 
 
 
+module Message = Dream_pure.Message
+
+
+
 val https :
-  all_done:(Dream.response -> unit) ->
+  all_done:(Message.response -> unit) ->
   H2_lwt_unix.Client.SSL.t ->
-    Dream.request -> Dream.response Dream.promise
+    Message.request -> Message.response Message.promise

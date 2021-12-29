@@ -1,12 +1,17 @@
-(* This file is part of Dream, released under the MIT license. See LICENSE.md
-   for details, or visit https://github.com/aantron/dream.
+(* This file is part of Hyper, released under the MIT license. See LICENSE.md
+   for details, or visit https://github.com/aantron/hyper.
 
    Copyright 2021 Anton Bachin *)
 
 
 
-type request = Dream.request
-type response = Dream.response
+module Message = Dream_pure.Message
+module Stream = Dream_pure.Stream
+
+
+
+type request = Message.request
+type response = Message.response
 type 'a promise = 'a Lwt.t
 
 
@@ -16,7 +21,7 @@ type connection =
   | Cleartext of Httpaf_lwt_unix.Client.t
   | SSL of Httpaf_lwt_unix.Client.SSL.t
   | H2 of H2_lwt_unix.Client.SSL.t (* TODO No h2c support. *)
-  | WebSocket of Dream__pure.Stream.stream
+  | WebSocket of Stream.stream
     (* TODO NOTE WebSocket connections over HTTP/1.1 are currently
        single-use. We still go through the pool so as to give it the chance to
        refuse the connection based on the number of other connections to the
@@ -165,11 +170,11 @@ let default_connection_pool =
 (* TODO Probably change the default to one per-process pool with some
    configuration. *)
 let send_one_request connection_pool hyper_request =
-  let uri = Uri.of_string (Dream.target hyper_request) in
+  let uri = Uri.of_string (Message.target hyper_request) in
   let scheme = Uri.scheme uri |> Option.get
   and host = Uri.host uri |> Option.get
   and port = Uri.port uri |> Option.value ~default:80
-  and path_and_query = Uri.path_and_query uri
+  (* and path_and_query = Uri.path_and_query uri *)
   in
   (* TODO Usage of Option.get above is temporary, though failure to provide a
      host should probably be a logic error, and doesn't have to be reported in a
@@ -184,7 +189,7 @@ let send_one_request connection_pool hyper_request =
     | Cleartext connection -> Httpaf_lwt_unix.Client.shutdown connection
     | SSL connection -> Httpaf_lwt_unix.Client.SSL.shutdown connection
     | H2 connection -> H2_lwt_unix.Client.SSL.shutdown connection
-    | WebSocket stream -> Dream__pure.Stream.close stream 1000; Lwt.return_unit
+    | WebSocket stream -> Stream.close stream 1000; Lwt.return_unit
   in
 
   let create (scheme, host, port) =
@@ -242,6 +247,14 @@ let send_one_request connection_pool hyper_request =
       }
 
     | "ws" ->
+      (* TODO WebSocket support just needs to be completely refactored, and
+         code common to the server and the client needs to be factored out. *)
+      assert false
+      (* TODO Need to return a different response depending on error conditions.
+         websocket/af provides the server's response. *)
+      (* let hyper_response =
+        Message.response ~status:`OK
+
       (* TODO The weboscket/af client interface seems pretty awkward to use in
          this kind of control flow, since the input handlers need to be defined
          immediately. However, the input handlers themselves are ill-conceinved,
@@ -274,7 +287,7 @@ let send_one_request connection_pool hyper_request =
         connection = WebSocket (Option.get !stream);
         destroy;
         concurrency = `Single_use;
-      }
+      } *)
 
     | _ ->
       assert false
@@ -307,15 +320,9 @@ let send_one_request connection_pool hyper_request =
       connection
       hyper_request
 
-  | WebSocket websocket ->
-    let hyper_response = Dream.response "" in
-
-    let hyper_response : Dream__pure.Inmost.response =
-      Obj.magic (hyper_response : Dream.response) in
-    let hyper_response = {hyper_response with client_stream = websocket} in
-    let hyper_response : Dream.response = Obj.magic hyper_response in
-
-    Lwt.return hyper_response
+  | WebSocket _websocket ->
+    assert false
+    (* TODO Adapt and restore. *)
   end
 
 
@@ -326,6 +333,8 @@ let send_one_request connection_pool hyper_request =
    handling is slightly tricky (with body streams), and the user can benefit by
    not having to write code themselves for this. *)
 (* TODO Expose a redirect cache callback for permanent redirects. *)
+(* TODO With mutable requests, it's probably better to allocate new requests
+   after each redirect, so that the whole trace can be reported to the user. *)
 let send ?(connection_pool = Lazy.force default_connection_pool) request =
   let rec redirect_loop remaining request =
     (* TODO Can save an allocation by binding the promise. *)
@@ -334,13 +343,13 @@ let send ?(connection_pool = Lazy.force default_connection_pool) request =
       (* TODO Log a warning here if the original redirect limit was not zero. *)
       Lwt.return response
     else
-      match Dream.status response with
+      match Message.status response with
       | `Moved_Permanently
       | `Found
       | `See_Other
       | `Temporary_Redirect
       | `Permanent_Redirect ->
-        begin match Dream.header "Location" response with
+        begin match Message.header response "Location" with
         | None ->
           (* TODO Log a warning here. *)
           Lwt.return response
@@ -351,25 +360,19 @@ let send ?(connection_pool = Lazy.force default_connection_pool) request =
           (* TODO If requests become mutable, probably a new request should be
              explicitly allocated. *)
           (* TODO The URI in Location: might be absolute or not. *)
-          let request : Dream__pure.Inmost.request =
-            Obj.magic (request : Dream.request) in
-          let request =
-            {request with specific = {request.specific with target}} in
-          let request : Dream.request =
-            Obj.magic request in
+          Message.set_target request target;
 
-          let request =
-            match Dream.status response with
-            | `Found
-            | `See_Other ->
-              Dream.with_method_ `GET request
-              (* TODO Note that doing this for 302 is not correct, but is done
-                 to match established behavior on the Web. *)
-              (* TODO Should also substitute the body with an empty one here,
-                 and warn if the previous body is not closed (and close it). *)
+          begin match Message.status response with
+          | `Found
+          | `See_Other ->
+            Message.set_method_ request `GET
+            (* TODO Note that doing this for 302 is not correct, but is done to
+               match established behavior on the Web. *)
+            (* TODO Should also substitute the body with an empty one here, and
+               warn if the previous body is not closed (and close it). *)
             | _ ->
-              request
-          in
+              ()
+          end;
 
           redirect_loop (remaining - 1) request
         end

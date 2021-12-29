@@ -5,8 +5,13 @@
 
 
 
-type request = Dream.request
-type response = Dream.response
+module Message = Dream_pure.Message
+(* TODO Hide this and all mentions of it from the generated docs. *)
+
+
+
+type request = Message.request
+type response = Message.response
 type 'a promise = 'a Lwt.t
 
 

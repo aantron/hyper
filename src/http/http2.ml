@@ -1,7 +1,13 @@
-(* This file is part of Dream, released under the MIT license. See LICENSE.md
-   for details, or visit https://github.com/aantron/dream.
+(* This file is part of Hyper, released under the MIT license. See LICENSE.md
+   for details, or visit https://github.com/aantron/hyper.
 
    Copyright 2021 Anton Bachin *)
+
+
+
+module Message = Dream_pure.Message
+module Method = Dream_pure.Method
+module Stream = Dream_pure.Stream
 
 
 
@@ -12,43 +18,39 @@ let https ~all_done connection hyper_request =
      comments above. *)
   let response_handler (h2_response : H2.Response.t) h2_response_body =
 
-    Lwt.async begin fun () ->
-      let%lwt hyper_response =
-        Dream.stream
-          ~code:(H2.Status.to_code h2_response.status)
-          ~headers:(H2.Headers.to_list h2_response.headers)
-          (fun _response -> Lwt.return ())
-      in
-      Lwt.wakeup_later received_response hyper_response;
+    let hyper_response =
+      Message.response
+        ~code:(H2.Status.to_code h2_response.status)
+        ~headers:(H2.Headers.to_list h2_response.headers)
+        Stream.null
+        Stream.null
+    in
 
-      let rec receive () =
-        H2.Body.schedule_read
-          h2_response_body
-          ~on_eof:(fun () ->
-            Lwt.async (fun () ->
-              let%lwt () = Dream.close_stream hyper_response in
-              all_done hyper_response;
-              Lwt.return_unit))
-          ~on_read:(fun buffer ~off ~len ->
-            Lwt.async (fun () ->
-              let%lwt () =
-                Dream.write_buffer
-                  ~offset:off ~length:len hyper_response buffer in
-              Lwt.return (receive ())))
-      in
-      receive ();
+    let read ~data ~close ~flush:_ ~ping:_ ~pong:_ =
+      H2.Body.schedule_read
+        h2_response_body
+        ~on_eof:(fun () ->
+          all_done hyper_response;
+          close 1000)
+        ~on_read:(fun buffer ~off ~len ->
+          data buffer off len true false)
+    in
+    let close _code =
+      H2.Body.close_reader h2_response_body in
+    let client_stream =
+      Stream.stream (Stream.reader ~read ~close) Stream.no_writer in
+    Message.set_client_stream hyper_response client_stream;
 
-      Lwt.return ()
-    end
+    Lwt.wakeup_later received_response hyper_response
   in
 
   let h2_request =
     H2.Request.create
-      ~headers:(H2.Headers.of_list (Dream.all_headers hyper_request))
+      ~headers:(H2.Headers.of_list (Message.all_headers hyper_request))
       ~scheme:"https"
       (Httpaf.Method.of_string
-        (Dream.method_to_string (Dream.method_ hyper_request)))
-      (Uri.path_and_query (Uri.of_string (Dream.target hyper_request))) in
+        (Method.method_to_string (Message.method_ hyper_request)))
+      (Uri.path_and_query (Uri.of_string (Message.target hyper_request))) in
   let h2_request_body =
     H2_lwt_unix.Client.SSL.request
       connection
@@ -57,9 +59,8 @@ let https ~all_done connection hyper_request =
       ~response_handler in
 
   let rec send () =
-    Dream.server_stream hyper_request
-    |> fun stream ->
-      Dream.next stream ~data ~close ~flush ~ping ~pong
+    Stream.read
+      (Message.server_stream hyper_request) ~data ~close ~flush ~ping ~pong
 
   and data buffer offset length _binary _fin =
     H2.Body.write_bigstring

@@ -1,7 +1,13 @@
-(* This file is part of Dream, released under the MIT license. See LICENSE.md
-   for details, or visit https://github.com/aantron/dream.
+(* This file is part of Hyper, released under the MIT license. See LICENSE.md
+   for details, or visit https://github.com/aantron/hyper.
 
    Copyright 2021 Anton Bachin *)
+
+
+
+module Message = Dream_pure.Message
+module Method = Dream_pure.Method
+module Stream = Dream_pure.Stream
 
 
 
@@ -15,12 +21,15 @@ let general make_request ~write_done ~all_done connection hyper_request =
       (httpaf_response : Httpaf.Response.t)
       httpaf_response_body =
 
-    (* TODO A bit annoying that this has to be bound first. *)
+    (* TODO A bit annoying that this has to be bound first, because the reader
+       needs a reference to the response in order to report the body reading as
+       finished to the connection pool. *)
     let hyper_response =
-      Dream.response
+      Message.response
         ~code:(Httpaf.Status.to_code httpaf_response.status)
         ~headers:(Httpaf.Headers.to_list httpaf_response.headers)
-        ""
+        Stream.null
+        Stream.null
     in
 
     (* TODO This code is very similar to the server side, for requests. *)
@@ -37,32 +46,24 @@ let general make_request ~write_done ~all_done connection hyper_request =
         ~on_eof:(fun () ->
           all_done hyper_response;
           close 1000)
-        ~on_read:(fun buffer ~off ~len -> data buffer off len true false)
+        ~on_read:(fun buffer ~off ~len ->
+          data buffer off len true false)
     in
     let close _code =
       Httpaf.Body.Reader.close httpaf_response_body in
     let client_stream =
-      Dream__pure.Stream.stream
-        (Dream__pure.Stream.reader ~read ~close)
-        Dream__pure.Stream.no_writer
-      |> Obj.magic (* TODO !!!! *)
-    in
-
-    (* TODO Probably need more optional arguments. *)
-    let hyper_response =
-      hyper_response
-      |> Dream.with_client_stream client_stream
-    in
+      Stream.stream (Stream.reader ~read ~close) Stream.no_writer in
+    Message.set_client_stream hyper_response client_stream;
 
     Lwt.wakeup_later received_response hyper_response
   in
 
   let httpaf_request =
     Httpaf.Request.create
-      ~headers:(Httpaf.Headers.of_list (Dream.all_headers hyper_request))
+      ~headers:(Httpaf.Headers.of_list (Message.all_headers hyper_request))
       (Httpaf.Method.of_string
-        (Dream.method_to_string (Dream.method_ hyper_request)))
-      (Uri.path_and_query (Uri.of_string (Dream.target hyper_request))) in
+        (Method.method_to_string (Message.method_ hyper_request)))
+      (Uri.path_and_query (Uri.of_string (Message.target hyper_request))) in
   let httpaf_request_body =
     make_request
       connection
@@ -71,9 +72,8 @@ let general make_request ~write_done ~all_done connection hyper_request =
       ~response_handler in
 
   let rec send () =
-    Dream.server_stream hyper_request
-    |> fun stream ->
-      Dream.next stream ~data ~close ~flush ~ping ~pong
+    Stream.read
+      (Message.server_stream hyper_request) ~data ~close ~flush ~ping ~pong
 
   (* TODO Implement flow control like on the server side, using flush. *)
   and data buffer offset length _binary _fin =

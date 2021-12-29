@@ -3,14 +3,14 @@
  (wrapped false)
  (modules hyper)
  (libraries
-  dream
-  dream.h2-lwt-unix
-  dream.httpaf-lwt-unix
+  dream-pure
+  dream-httpaf.h2-lwt-unix
+  dream-httpaf.httpaf-lwt-unix
   hyper.http
   lwt
   lwt.unix
   lwt_ssl
   ssl
-  dream.websocketaf-lwt-unix
+  dream-httpaf.websocketaf-lwt-unix
  )
  (preprocess (pps lwt_ppx)))
