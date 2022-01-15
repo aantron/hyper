@@ -10,6 +10,5 @@ module Message = Dream_pure.Message
 
 
 val https :
-  all_done:(Message.response -> unit) ->
   H2_lwt_unix.Client.SSL.t ->
     Message.request -> Message.response Message.promise

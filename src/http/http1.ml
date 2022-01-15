@@ -14,7 +14,7 @@ module Stream = Dream_pure.Stream
 (** Runs a request for both cleartext and SSL HTTP/1.1 connections, since the
     code is the same once the request is created. *)
 (* TODO How to best pass the done functions. *)
-let general make_request ~write_done ~all_done connection hyper_request =
+let general make_request connection hyper_request =
   let response_promise, received_response = Lwt.wait () in
 
   let response_handler
@@ -24,6 +24,8 @@ let general make_request ~write_done ~all_done connection hyper_request =
     (* TODO A bit annoying that this has to be bound first, because the reader
        needs a reference to the response in order to report the body reading as
        finished to the connection pool. *)
+    (* TODO response creation can now be pushed down, since the _done mechanism
+       is gone. *)
     let hyper_response =
       Message.response
         ~code:(Httpaf.Status.to_code httpaf_response.status)
@@ -40,11 +42,10 @@ let general make_request ~write_done ~all_done connection hyper_request =
        can actually destroy request pipelining, since the next request may have
        already started writing. Is this one of the reasons pipelining is
        broken in most implementations? *)
-    let read ~data ~close ~flush:_ ~ping:_ ~pong:_ =
+    let read ~data ~flush:_ ~ping:_ ~pong:_ ~close ~exn:_ =
       Httpaf.Body.Reader.schedule_read
         httpaf_response_body
         ~on_eof:(fun () ->
-          all_done hyper_response;
           close 1000)
         ~on_read:(fun buffer ~off ~len ->
           data buffer off len true false)
@@ -52,7 +53,8 @@ let general make_request ~write_done ~all_done connection hyper_request =
     let close _code =
       Httpaf.Body.Reader.close httpaf_response_body in
     let client_stream =
-      Stream.stream (Stream.reader ~read ~close) Stream.no_writer in
+      Stream.stream
+        (Stream.reader ~read ~close ~abort:close) Stream.no_writer in
     Message.set_client_stream hyper_response client_stream;
 
     Lwt.wakeup_later received_response hyper_response
@@ -73,7 +75,7 @@ let general make_request ~write_done ~all_done connection hyper_request =
 
   let rec send () =
     Stream.read
-      (Message.server_stream hyper_request) ~data ~close ~flush ~ping ~pong
+      (Message.server_stream hyper_request) ~data ~flush ~ping ~pong ~close ~exn
 
   (* TODO Implement flow control like on the server side, using flush. *)
   and data buffer offset length _binary _fin =
@@ -84,14 +86,14 @@ let general make_request ~write_done ~all_done connection hyper_request =
       buffer;
     send ()
 
-  and close _code =
-    Httpaf.Body.Writer.close httpaf_request_body;
-    (* TODO This should only be called if reading is not yet done. *)
-    write_done ()
-
   and flush () = send ()
   and ping _buffer _offset _length = send ()
   and pong _buffer _offset _length = send ()
+
+  and close _code =
+    Httpaf.Body.Writer.close httpaf_request_body
+  and exn _exn =
+    Httpaf.Body.Writer.close httpaf_request_body
 
   in
 

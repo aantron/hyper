@@ -11,7 +11,7 @@ module Stream = Dream_pure.Stream
 
 
 
-let https ~all_done connection hyper_request =
+let https connection hyper_request =
   let response_promise, received_response = Lwt.wait () in
 
   (* TODO This is a nasty duplicate of the above case, specialized for H2. See
@@ -26,11 +26,10 @@ let https ~all_done connection hyper_request =
         Stream.null
     in
 
-    let read ~data ~close ~flush:_ ~ping:_ ~pong:_ =
+    let read ~data ~flush:_ ~ping:_ ~pong:_ ~close ~exn:_ =
       H2.Body.schedule_read
         h2_response_body
         ~on_eof:(fun () ->
-          all_done hyper_response;
           close 1000)
         ~on_read:(fun buffer ~off ~len ->
           data buffer off len true false)
@@ -38,7 +37,8 @@ let https ~all_done connection hyper_request =
     let close _code =
       H2.Body.close_reader h2_response_body in
     let client_stream =
-      Stream.stream (Stream.reader ~read ~close) Stream.no_writer in
+      Stream.stream
+      (Stream.reader ~read ~close ~abort:close) Stream.no_writer in
     Message.set_client_stream hyper_response client_stream;
 
     Lwt.wakeup_later received_response hyper_response
@@ -60,7 +60,7 @@ let https ~all_done connection hyper_request =
 
   let rec send () =
     Stream.read
-      (Message.server_stream hyper_request) ~data ~close ~flush ~ping ~pong
+      (Message.server_stream hyper_request) ~data ~flush ~ping ~pong ~close ~exn
 
   and data buffer offset length _binary _fin =
     H2.Body.write_bigstring
@@ -70,10 +70,11 @@ let https ~all_done connection hyper_request =
       buffer;
     send ()
 
-  and close _code = H2.Body.close_writer h2_request_body
   and flush () = send ()
   and ping _buffer _offset _length = send ()
   and pong _buffer _offset _length = send ()
+  and close _code = H2.Body.close_writer h2_request_body
+  and exn _exn = H2.Body.close_writer h2_request_body
 
   in
 

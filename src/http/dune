@@ -2,10 +2,11 @@
  (public_name hyper.http)
  (name hyper__http)
  (libraries
-  dream
+  dream-pure
   dream-httpaf.h2
   dream-httpaf.h2-lwt-unix
   dream-httpaf.httpaf
   dream-httpaf.httpaf-lwt-unix
+  uri
  )
  (preprocess (pps lwt_ppx)))
