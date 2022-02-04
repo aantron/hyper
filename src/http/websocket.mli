@@ -9,10 +9,6 @@ module Message = Dream_pure.Message
 
 
 
-val http :
-  Httpaf_lwt_unix.Client.t ->
-    Message.request -> Message.response Message.promise
-
-val https :
-  Httpaf_lwt_unix.Client.SSL.t ->
+val ws :
+  Lwt_unix.file_descr ->
     Message.request -> Message.response Message.promise

@@ -1,45 +1,90 @@
 (* This file is part of Hyper, released under the MIT license. See LICENSE.md
    for details, or visit https://github.com/aantron/hyper.
 
-   Copyright 2021 Anton Bachin *)
+   Copyright 2022 Anton Bachin *)
 
 
 
+module Formats = Dream_pure.Formats
 module Message = Dream_pure.Message
+module Method = Dream_pure.Method
 module Stream = Dream_pure.Stream
 
 
 
-type request = Message.request
-type response = Message.response
-type 'a promise = 'a Lwt.t
+type request = client message
+and response = server message
+and handler = request -> response promise
+(* and middleware = hansdler -> handler *)
+and 'a message = 'a Message.message
+and client = Message.client
+and server = Message.server
+and 'a promise = 'a Lwt.t
+and stream = Stream.stream
 
-type method_ = Dream_pure.Method.method_
-
-
-
-let request ?method_ ?headers target =
-  Message.request ?method_ ~target ?headers Stream.null Stream.empty
-
-let body response =
-  Message.body response
+type method_ = Method.method_
 
 
 
-(* TODO Is this the right representation? *)
-type connection =
-  | Cleartext of Httpaf_lwt_unix.Client.t
-  | SSL of Httpaf_lwt_unix.Client.SSL.t
-  | H2 of H2_lwt_unix.Client.SSL.t (* TODO No h2c support. *)
-  (* | WebSocket of Stream.stream *)
-    (* TODO NOTE WebSocket connections over HTTP/1.1 are currently
-       single-use. We still go through the pool so as to give it the chance to
-       refuse the connection based on the number of other connections to the
-       same endpoint or host. The actual closing of WebSocket connections by the
-       pool is not yet implemented, so it might try to multiplex them. *)
-    (* TODO WebSockets over https and WebSockets over HTTP/2. *)
+(* TODO There is no way to create a request with a pipe using this function. *)
+let request ?method_ ?headers ?(body = Stream.empty) target =
+  Message.request ?method_ ~target ?headers Stream.null body
 
-type endpoint = string * string * int
+let send = Hyper__http.Connect.no_pool ?transport:None
+
+let body = Message.body
+
+let follow_redirect = Hyper__logic.Redirect.follow_redirect
+
+let to_form_urlencoded = Formats.to_form_urlencoded
+
+
+
+let read message =
+  Message.read (Message.client_stream message)
+
+let write ?kind message chunk =
+  Message.write ?kind (Message.client_stream message) chunk
+
+let flush message =
+  Message.flush (Message.client_stream message)
+
+
+
+(* TODO Error handling. *)
+let get ?headers ?redirect_limit ?(server = send) target =
+  let request =
+    request
+      ~method_:`GET
+      ?headers
+      target
+  in
+  let%lwt response = (follow_redirect ?redirect_limit server) request in
+  body response
+
+(* TODO Error handling. *)
+(* TODO Don't always use TE: chunked. Also, this should be handled at the
+   transport level, since TE: chunked is not even valid for http2. *)
+let post ?(headers = []) ?redirect_limit ?(server = send) target the_body =
+  let headers = ("Transfer-Encoding", "chunked")::headers in
+  let request =
+    request
+      ~method_:`POST
+      ~headers
+      ~body:(Stream.string the_body)
+      target
+  in
+  let%lwt response = (follow_redirect ?redirect_limit server) request in
+  body response
+
+let websocket ?redirect_limit ?(server = send) target =
+  let request = request ~method_:`GET target in
+  (follow_redirect ?redirect_limit server) request
+  (* TODO Check the response status... *)
+
+
+
+(* type endpoint = string * string * int *)
 (* TODO But what should a host be? An unresolved hostname:port, or a resolved
    hostname:port? Hosts probably also need a comparison function or
    something. And probably a pretty-printing function. These things are entirely
@@ -59,7 +104,7 @@ type endpoint = string * string * int
    the client when a request has completed sending (only). However, given
    pipelining is buggy and there is HTTP/2, maybe it's not worth complicating
    the API for this. *)
-
+(*
 type create_result = {
   connection : connection;
   destroy : connection -> unit promise;
@@ -171,7 +216,7 @@ let general_connection_pool () =
 
 
 let default_connection_pool =
-  lazy (general_connection_pool ())
+  lazy (general_connection_pool ()) *)
 
 
 
@@ -179,6 +224,7 @@ let default_connection_pool =
 (* TODO Good error handling. *)
 (* TODO Probably change the default to one per-process pool with some
    configuration. *)
+(*
 let send_one_request connection_pool hyper_request =
   let uri = Uri.of_string (Message.target hyper_request) in
   let scheme = Uri.scheme uri |> Option.get
@@ -333,64 +379,7 @@ let send_one_request connection_pool hyper_request =
   (* | WebSocket _websocket ->
     assert false *)
     (* TODO Adapt and restore. *)
-  end
-
-
-
-(* TODO Add an option to redirect only to the same host? Or is this better
-   addressed by just letting the user do redirects manually, if needed? It's
-   probably best to expose some kind of filter function, because redirect
-   handling is slightly tricky (with body streams), and the user can benefit by
-   not having to write code themselves for this. *)
-(* TODO Expose a redirect cache callback for permanent redirects. *)
-(* TODO With mutable requests, it's probably better to allocate new requests
-   after each redirect, so that the whole trace can be reported to the user. *)
-let send ?(connection_pool = Lazy.force default_connection_pool) request =
-  let rec redirect_loop remaining request =
-    (* TODO Can save an allocation by binding the promise. *)
-    let%lwt response = send_one_request connection_pool request in
-    if remaining <= 0 then
-      (* TODO Log a warning here if the original redirect limit was not zero. *)
-      Lwt.return response
-    else
-      match Message.status response with
-      | `Moved_Permanently
-      | `Found
-      | `See_Other
-      | `Temporary_Redirect
-      | `Permanent_Redirect ->
-        begin match Message.header response "Location" with
-        | None ->
-          (* TODO Log a warning here. *)
-          Lwt.return response
-        | Some target ->
-          (* TODO For Moved Permanently, Temporary Redirect, Permanent Redirect,
-             warn if the server has read the request body, because we won't
-             easily be able to resend it. *)
-          (* TODO If requests become mutable, probably a new request should be
-             explicitly allocated. *)
-          (* TODO The URI in Location: might be absolute or not. *)
-          Message.set_target request target;
-
-          begin match Message.status response with
-          | `Found
-          | `See_Other ->
-            Message.set_method_ request `GET
-            (* TODO Note that doing this for 302 is not correct, but is done to
-               match established behavior on the Web. *)
-            (* TODO Should also substitute the body with an empty one here, and
-               warn if the previous body is not closed (and close it). *)
-            | _ ->
-              ()
-          end;
-
-          redirect_loop (remaining - 1) request
-        end
-      | _ ->
-        Lwt.return response
-  in
-
-  redirect_loop 5 request
+  end *)
 
 
 

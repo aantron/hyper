@@ -1,0 +1,4 @@
+(executable
+ (name websocket)
+ (libraries dream hyper)
+ (preprocess (pps lwt_ppx)))

@@ -1,0 +1,4 @@
+(executable
+ (name in_process)
+ (libraries dream hyper)
+ (preprocess (pps lwt_ppx)))

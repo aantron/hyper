@@ -1,0 +1,4 @@
+(executable
+ (name redirect)
+ (libraries dream hyper)
+ (preprocess (pps lwt_ppx)))

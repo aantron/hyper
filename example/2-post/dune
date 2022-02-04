@@ -1,0 +1,4 @@
+(executable
+ (name post)
+ (libraries dream hyper)
+ (preprocess (pps lwt_ppx)))

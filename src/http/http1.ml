@@ -1,7 +1,7 @@
 (* This file is part of Hyper, released under the MIT license. See LICENSE.md
    for details, or visit https://github.com/aantron/hyper.
 
-   Copyright 2021 Anton Bachin *)
+   Copyright 2022 Anton Bachin *)
 
 
 
@@ -13,89 +13,153 @@ module Stream = Dream_pure.Stream
 
 (** Runs a request for both cleartext and SSL HTTP/1.1 connections, since the
     code is the same once the request is created. *)
-(* TODO How to best pass the done functions. *)
-let general make_request connection hyper_request =
-  let response_promise, received_response = Lwt.wait () in
+let general send_request client connection (request : Message.request) =
 
-  let response_handler
-      (httpaf_response : Httpaf.Response.t)
-      httpaf_response_body =
+  (* The http/af request can be created right away. *)
+  let httpaf_request : Httpaf.Request.t =
+    (* TODO Transfer-Encoding or Content-Length should be added only if neither
+       header is present, and the stream is known to be non-empty. The latter
+       can only be checked with some kind of stream hints API, which does not
+       exist right now. *)
+    let headers =
+      Message.all_headers request
+      |> fun headers -> ("Transfer-Encoding", "chunked")::headers
+      |> Httpaf.Headers.of_list
+    and method_ =
+      Httpaf.Method.of_string
+        (Method.method_to_string (Message.method_ request))
+    and target = Uri.path_and_query (Uri.of_string (Message.target request)) in
 
-    (* TODO A bit annoying that this has to be bound first, because the reader
-       needs a reference to the response in order to report the body reading as
-       finished to the connection pool. *)
-    (* TODO response creation can now be pushed down, since the _done mechanism
-       is gone. *)
-    let hyper_response =
-      Message.response
-        ~code:(Httpaf.Status.to_code httpaf_response.status)
-        ~headers:(Httpaf.Headers.to_list httpaf_response.headers)
-        Stream.null
-        Stream.null
-    in
-
-    (* TODO This code is very similar to the server side, for requests. *)
-    (* TODO Work out closing. In particular, in case of early close by the
-       reader, this should probably be treated as an error for the purposes of
-       connection pipelining, so the connection should not be reused because the
-       state of the response stream relative to expectations is unknown. That
-       can actually destroy request pipelining, since the next request may have
-       already started writing. Is this one of the reasons pipelining is
-       broken in most implementations? *)
-    let read ~data ~flush:_ ~ping:_ ~pong:_ ~close ~exn:_ =
-      Httpaf.Body.Reader.schedule_read
-        httpaf_response_body
-        ~on_eof:(fun () ->
-          close 1000)
-        ~on_read:(fun buffer ~off ~len ->
-          data buffer off len true false)
-    in
-    let close _code =
-      Httpaf.Body.Reader.close httpaf_response_body in
-    let client_stream =
-      Stream.stream
-        (Stream.reader ~read ~close ~abort:close) Stream.no_writer in
-    Message.set_client_stream hyper_response client_stream;
-
-    Lwt.wakeup_later received_response hyper_response
+    Httpaf.Request.create ~headers method_ target
   in
 
-  let httpaf_request =
-    Httpaf.Request.create
-      ~headers:(Httpaf.Headers.of_list (Message.all_headers hyper_request))
-      (Httpaf.Method.of_string
-        (Method.method_to_string (Message.method_ hyper_request)))
-      (Uri.path_and_query (Uri.of_string (Message.target hyper_request))) in
-  let httpaf_request_body =
-    make_request
-      connection
+  (* The http/af response and Hyper response are delayed, so create a
+     promise. *)
+  let response_promise, receive_response = Lwt.wait () in
+
+  (* Exceptions passed to the error handler after the response handler is called
+     (i.e. when the response body is being read) are stored here, and are raised
+     by the response body reader. *)
+  let received_response = ref false in
+  let reported_exn = ref None in
+  let exn_handler = ref ignore in
+
+  (* TODO Propagate the close and abort changes to the server side, HTTP/2,
+     etc. *)
+  let response_handler
+      (httpaf_response : Httpaf.Response.t) httpaf_response_body =
+
+    received_response := true;
+
+    (* Doing a second schedule_read after on_eof results in no callback ever
+       being called. We want to call ~close or ~exn again, though. Using
+       is_closed instead of this reference is not good enough, because is_closed
+       becomes true while there is still data in the stream, and schedule_read
+       would succeed. *)
+    let got_eof = ref false in
+
+    let read ~data ~flush:_ ~ping:_ ~pong:_ ~close ~exn =
+      match !reported_exn with
+      | Some the_exn ->
+        exn the_exn
+      | None ->
+        if !got_eof then
+          close 1000
+        else begin
+          exn_handler := exn;
+          Httpaf.Body.Reader.schedule_read
+            httpaf_response_body
+            ~on_eof:(fun () ->
+              got_eof := true;
+              exn_handler := ignore;
+              close 1000)
+            ~on_read:(fun buffer ~off ~len ->
+              exn_handler := ignore;
+              data buffer off len true false)
+        end
+
+    and close _code =
+      Httpaf.Body.Reader.close httpaf_response_body
+
+    and abort exn =
+      reported_exn := Some exn;
+      Httpaf.Client_connection.report_exn connection exn
+
+    in
+
+    let client_stream =
+      Stream.stream (Stream.reader ~read ~close ~abort) Stream.no_writer in
+
+    Message.response
+      ~code:(Httpaf.Status.to_code httpaf_response.status)
+      ~headers:(Httpaf.Headers.to_list httpaf_response.headers)
+      client_stream
+      Stream.null
+    |> Lwt.wakeup_later receive_response
+  in
+
+  let error_handler = function
+    | `Malformed_response explanation ->
+      Lwt.wakeup_later_exn receive_response
+        (Failure ("malformed response: " ^ explanation))
+    | `Invalid_response_body_length _response ->
+      Lwt.wakeup_later_exn receive_response
+        (Failure "invalid response body length")
+    | `Exn exn ->
+      if not !received_response then
+        Lwt.wakeup_later_exn receive_response exn
+      else begin
+        reported_exn := Some exn;
+        let handler = !exn_handler in
+        exn_handler := ignore;
+        handler exn
+      end
+  in
+
+  let httpaf_request_body_writer =
+    send_request
+      client
       httpaf_request
-      ~error_handler:(fun _ -> failwith "Protocol error") (* TODO *)
-      ~response_handler in
+      ~error_handler
+      ~response_handler
+  in
+
+  (* The request body writing loop. *)
+  let bytes_since_flush = ref 0 in
 
   let rec send () =
     Stream.read
-      (Message.server_stream hyper_request) ~data ~flush ~ping ~pong ~close ~exn
+      (Message.server_stream request) ~data ~flush ~ping ~pong ~close ~exn
 
-  (* TODO Implement flow control like on the server side, using flush. *)
   and data buffer offset length _binary _fin =
     Httpaf.Body.Writer.write_bigstring
-      httpaf_request_body
+      httpaf_request_body_writer
       ~off:offset
       ~len:length
       buffer;
+    bytes_since_flush := !bytes_since_flush + length;
+    if !bytes_since_flush >= 4096 then begin
+      bytes_since_flush := 0;
+      Httpaf.Body.Writer.flush httpaf_request_body_writer send
+    end
+    else
+      send ()
+
+  and flush () =
+    bytes_since_flush := 0;
+    Httpaf.Body.Writer.flush httpaf_request_body_writer send
+
+  and ping _buffer _offset _length =
     send ()
 
-  and flush () = send ()
-  and ping _buffer _offset _length = send ()
-  and pong _buffer _offset _length = send ()
+  and pong _buffer _offset _length =
+    send ()
 
   and close _code =
-    Httpaf.Body.Writer.close httpaf_request_body
-  and exn _exn =
-    Httpaf.Body.Writer.close httpaf_request_body
+    Httpaf.Body.Writer.close httpaf_request_body_writer
 
-  in
+  and exn exn =
+    Httpaf.Client_connection.report_exn connection exn in
 
   send ();
 
@@ -103,8 +167,8 @@ let general make_request connection hyper_request =
 
 
 
-let http =
-  general Httpaf_lwt_unix.Client.request
+let http client =
+  general Httpaf_lwt_unix.Client.request client client.connection
 
-let https =
-  general Httpaf_lwt_unix.Client.SSL.request
+let https client =
+  general Httpaf_lwt_unix.Client.SSL.request client client.connection

@@ -2,11 +2,17 @@
  (public_name hyper.http)
  (name hyper__http)
  (libraries
+  dream-httpaf
   dream-pure
   dream-httpaf.h2
   dream-httpaf.h2-lwt-unix
   dream-httpaf.httpaf
   dream-httpaf.httpaf-lwt-unix
+  dream-httpaf.websocketaf
+  dream-httpaf.websocketaf-lwt-unix
+  mirage-crypto-rng
+  mirage-crypto-rng.lwt
   uri
  )
- (preprocess (pps lwt_ppx)))
+ (preprocess (pps lwt_ppx))
+ (instrumentation (backend bisect_ppx)))

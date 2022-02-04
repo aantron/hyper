@@ -1,0 +1,5 @@
+(library
+ (name test_expect_https)
+ (libraries test_expect_http)
+ (inline_tests)
+ (preprocess (pps ppx_expect)))

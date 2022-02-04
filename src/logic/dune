@@ -1,0 +1,8 @@
+(library
+ (public_name hyper.logic)
+ (name hyper__logic)
+ (libraries
+  dream-pure
+  uri
+ )
+ (preprocess (pps lwt_ppx)))
