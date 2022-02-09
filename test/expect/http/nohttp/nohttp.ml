@@ -9,7 +9,7 @@ let test request =
   Test_expect_http.Suite.server request
 
 let%expect_test _ =
-  Test_expect_http.Suite.run ~nohttp:true test;
+  Test_expect_http.Suite.http ~nohttp:true test;
   [%expect {|
     test: basic
     foo

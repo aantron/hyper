@@ -17,6 +17,9 @@ let () =
 
 let ws socket request =
   let target = Uri.of_string (Message.target request) in
+
+  (* Retrieve values for the Host: and Port: headers of the WebSocket
+     request. *)
   let host = Option.value (Uri.host target) ~default:"" in
   let port =
     match Uri.port target with
@@ -35,22 +38,29 @@ let ws socket request =
 
   let error_handler = function
     | `Handshake_failure (httpaf_response, httpaf_response_body_reader) ->
+
       received_response := true;
+      let got_eof = ref false in
 
       let read ~data ~flush:_ ~ping:_ ~pong:_ ~close ~exn =
         match !reported_exn with
         | Some the_exn ->
           exn the_exn
         | None ->
-          exn_handler := exn;
-          Httpaf.Body.Reader.schedule_read
-            httpaf_response_body_reader
-            ~on_eof:(fun () ->
-              exn_handler := ignore;
-              close 1000)
-            ~on_read:(fun buffer ~off ~len ->
-              exn_handler := ignore;
-              data buffer off len true false)
+          if !got_eof then
+            close 1000
+          else begin
+            exn_handler := exn;
+            Httpaf.Body.Reader.schedule_read
+              httpaf_response_body_reader
+              ~on_eof:(fun () ->
+                got_eof := true;
+                exn_handler := ignore;
+                close 1000)
+              ~on_read:(fun buffer ~off ~len ->
+                exn_handler := ignore;
+                data buffer off len true false)
+          end
 
       and close _code =
         Httpaf.Body.Reader.close httpaf_response_body_reader
@@ -87,31 +97,12 @@ let ws socket request =
       end
   in
 
-  let in_reader, in_writer = Stream.pipe ()
-  and out_reader, out_writer = Stream.pipe () in
-  let client_stream = Stream.stream out_reader in_writer
-  and server_stream = Stream.stream in_reader out_writer in
-
-  let websocket_handler =
-    Dream_httpaf.Websocket.websocket_handler server_stream in
-  (* TODO The equality between server and client input handlers is not
-     exposed in the websocketaf API.
-     https://github.com/anmonteiro/websocketaf/issues/39. *)
-  let websocket_handler
-      : Websocketaf.Wsd.t -> Websocketaf.Server_connection.input_handlers =
-    websocket_handler
-  in
-  let websocket_handler
-      : Websocketaf.Wsd.t -> Websocketaf.Client_connection.input_handlers =
-    Obj.magic websocket_handler
-  in
-
   let websocket_handler socket =
     let response =
-      Message.response
-        ~status:`Switching_Protocols client_stream server_stream in
+      Message.response ~status:`Switching_Protocols Stream.empty Stream.null in
+    let server_stream = Message.create_websocket response in
     Lwt.wakeup_later receive_response response;
-    websocket_handler socket
+    Dream_httpaf.Websocket.client_websocket_handler server_stream socket
   in
 
   let%lwt client =

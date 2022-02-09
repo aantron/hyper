@@ -12,7 +12,7 @@ let test request =
   Hyper__http.Connect.no_pool ~transport:`HTTPS request
 
 let%expect_test _ =
-  Test_expect_http.Suite.run ~https:true test;
+  Test_expect_http.Suite.http ~https:true test;
   [%expect {|
     test: basic
     foo

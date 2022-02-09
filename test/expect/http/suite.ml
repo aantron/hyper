@@ -42,44 +42,59 @@ let server =
       Dream.respond body);
 
     Dream.post "/stream" (fun request ->
-      Dream.stream (fun response ->
-        let%lwt () = Dream.flush response in
+      Dream.stream (fun stream ->
+        let%lwt () = Dream.flush stream in
         let rec loop () =
-          match%lwt Dream.read request with
+          match%lwt Dream.read (Dream.server_stream request) with
           | Some chunk ->
-            let%lwt () = Dream.write response chunk in
+            let%lwt () = Dream.write stream chunk in
             loop ()
           | None ->
-            Dream.close response
+            Dream.close stream
         in
         loop ()));
 
     Dream.post "/close" (fun request ->
-      let%lwt () = Dream.close request in
+      let%lwt () = Dream.close (Dream.server_stream request) in
       Dream.respond "");
+
+    Dream.get "/socket" (fun _request ->
+      Dream.websocket (fun response ->
+        match%lwt Dream.read response with
+        | Some "foo" ->
+          let%lwt () = Dream.write response "bar" in
+          Dream.close response
+        | _ ->
+          Dream.close response));
+
+    Dream.get "/socket-redirect" (fun request ->
+      let%lwt response = Dream.redirect request "/socket" in
+      Dream.set_body response "foobar";
+      Lwt.return response);
   ]
   @@ Dream.not_found
 
+let start https nohttp test =
+  if not nohttp then begin
+    let port = Test_expect.Helpers.next_port () in
+    let stop, stop_server = Lwt.wait () in
+    let stopped = Dream.serve ~port ~https ~stop server in
+    let test request =
+      Test_expect.Helpers.set_port request port;
+      test request
+    in
+    let () = Lwt_main.run (Lwt_unix.sleep 0.1) in
+    stop_server, stopped, test
+  end
+  else begin
+    let stopped, stop_server = Lwt.wait () in
+    stop_server, stopped, test
+  end
 
 
-let run ?(https = false) ?(nohttp = false) test =
-  let stop_server, stopped, test =
-    if not nohttp then begin
-      let port = Test_expect.Helpers.next_port () in
-      let stop, stop_server = Lwt.wait () in
-      let stopped = Dream.serve ~port ~https ~stop server in
-      let test request =
-        Test_expect.Helpers.set_port request port;
-        test request
-      in
-      let () = Lwt_main.run (Lwt_unix.sleep 0.1) in
-      stop_server, stopped, test
-    end
-    else begin
-      let stopped, stop_server = Lwt.wait () in
-      stop_server, stopped, test
-    end
-  in
+
+let http ?(https = false) ?(nohttp = false) test =
+  let stop_server, stopped, test = start https nohttp test in
 
 
 
@@ -241,7 +256,7 @@ let run ?(https = false) ?(nohttp = false) test =
       let body_promise = Hyper.body response in
       let%lwt () = write_promise in
       let%lwt () = Message.write client_stream "bar" in
-      let%lwt () = Message.close request in
+      let%lwt () = Message.close client_stream in
       let%lwt response = body_promise in
       print_endline response;
       Lwt.return_unit
@@ -279,7 +294,7 @@ let run ?(https = false) ?(nohttp = false) test =
             (Lwt.wakeup_later ping_pong_done));
       let%lwt () = ping_pong_promise in
       let%lwt () = Message.write client_stream "bar" in
-      let%lwt () = Message.close request in
+      let%lwt () = Message.close client_stream in
       let%lwt response = body_promise in
       print_endline response;
       Lwt.return_unit
@@ -305,7 +320,7 @@ let run ?(https = false) ?(nohttp = false) test =
       let chunk_2 = String.make 16384 'b' in
       let%lwt () = Message.write client_stream chunk_1 in
       let%lwt () = Message.write client_stream chunk_2 in
-      let%lwt () = Message.close request in
+      let%lwt () = Message.close client_stream in
       let%lwt response = body_promise in
       Printf.printf "%i\n%!" (String.length response);
       Lwt.return_unit
@@ -485,5 +500,118 @@ let run ?(https = false) ?(nohttp = false) test =
   in
 
 
+
+  ()
+
+
+
+let ws ?(https = false) ?(nohttp = false) test =
+  let stop_server, stopped, test = start https nohttp test in
+
+
+
+  (* Basic. *)
+  let () =
+    print_endline "test: basic";
+    Lwt_main.run begin
+      let request = Hyper.request "ws://127.0.0.1/socket" in
+      let%lwt response = test request in
+      Message.status response |> Status.status_to_string |> print_endline;
+      match Message.get_websocket response with
+      | None ->
+        print_endline "not a WebSocket";
+        Lwt.return_unit
+      | Some (client_stream, _server_stream) ->
+        let%lwt () = Message.write client_stream "foo" in
+        let%lwt message = Message.read client_stream in
+        let%lwt () = Message.close client_stream in
+        begin match message with
+        | Some message -> print_endline message
+        | None -> print_endline "None"
+        end;
+        Lwt.return_unit
+    end
+  in
+
+
+
+  (* Non-WebSocket response. *)
+  let () =
+    print_endline "test: non-WebSocket response";
+    Lwt_main.run begin
+      let request = Hyper.request "ws://127.0.0.1/socket-redirect" in
+      let%lwt response = test request in
+      Message.status response |> Status.status_to_string |> print_endline;
+      match Message.get_websocket response with
+      | Some _ ->
+        print_endline "got a WebSocket";
+        Lwt.return_unit
+      | None ->
+        match Message.header response "Location" with
+        | None ->
+          print_endline "no Location: header";
+          Lwt.return_unit
+        | Some location ->
+          print_endline location;
+          let%lwt body = Hyper.body response in
+          print_endline body;
+          Lwt.return_unit
+    end
+  in
+
+  (* Non-WebSocket: client closes response stream. *)
+  let () =
+    print_endline "test: non-WebSocket: client closes response stream";
+    Lwt_main.run begin
+      let request = Hyper.request "ws://127.0.0.1/socket-redirect" in
+      let%lwt response = test request in
+      let stream = Message.client_stream response in
+      let%lwt () = Message.close stream in
+      let%lwt body = Hyper.body response in
+      print_endline body;
+      Lwt.return_unit
+    end
+  in
+
+  (* Non-WebSocket: client aborts response stream. *)
+  (* TODO This is equivalent to closing without an exception, due to
+     https://github.com/anmonteiro/websocketaf/issues/40. *)
+  let () =
+    print_endline "test: non-WebSocket: client aborts response stream";
+    Lwt_main.run begin
+      let request = Hyper.request "ws://127.0.0.1/socket-redirect" in
+      let%lwt response = test request in
+      let stream = Message.client_stream response in
+      Stream.abort stream Exit;
+      let%lwt body = Hyper.body response in
+      print_endline body;
+      Lwt.return_unit
+    end
+  in
+
+  (* Non-WebSocket: read after end of stream. *)
+  let () =
+    print_endline "test: non-WebSocket: read after end of stream";
+    Lwt_main.run begin
+      let request = Hyper.request "ws://127.0.0.1/socket-redirect" in
+      let%lwt response = test request in
+      let%lwt body = Hyper.body response in
+      print_endline body;
+      match%lwt Message.read (Message.client_stream response) with
+      | None ->
+        print_endline "None";
+        Lwt.return_unit
+      | Some _chunk ->
+        print_endline "unexpected chunk";
+        Lwt.return_unit
+    end
+  in
+
+
+
+  let () =
+    Lwt.wakeup_later stop_server ();
+    Lwt_main.run stopped
+  in
 
   ()

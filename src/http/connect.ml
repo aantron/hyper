@@ -36,11 +36,11 @@ type connection =
 
 type 'a promise = 'a Dream_pure.Message.promise
 
-let close = function
+(* let close = function
   | Cleartext connection -> Httpaf_lwt_unix.Client.shutdown connection
   | SSL connection -> Httpaf_lwt_unix.Client.SSL.shutdown connection
   | H2 connection -> H2_lwt_unix.Client.SSL.shutdown connection
-  | WebSocket connection -> Lwt_unix.close connection
+  | WebSocket connection -> Lwt_unix.close connection *)
 
 (* let concurrency = function
   | Cleartext _ -> `Pipeline
@@ -122,12 +122,27 @@ let choose request =
   | "ws" -> ws_cleartext_tcp
   | _ -> http1_cleartext_tcp
 
-let send connection request =
+let send' connection request =
   match connection with
   | Cleartext connection -> Http1.http connection request
   | SSL connection -> Http1.https connection request
   | H2 connection -> Http2.https connection request
   | WebSocket connection -> Websocket.ws connection request
+
+(* let send request =
+  let connect = choose request in
+
+  (* TODO Or choose a connection from the pool. The connect return value would
+     have to be different here, so we can choose the pool. *)
+  let%lwt connection = connect (Message.target request) in
+
+  (* TODO Based on the kind of connection, wrap the request stream to monitor
+     close. *)
+
+  send' connection request
+
+  (* TODO Based on the kind of connection, wrap the response or WebSocket stream
+     to monitor close. *) *)
 
 let no_pool ?transport request =
   let connect =
@@ -136,8 +151,9 @@ let no_pool ?transport request =
     | Some `HTTP1 -> http1_cleartext_tcp
     | Some `HTTPS -> alpn_https_tcp ~protocols:["http/1.1"]
     | Some `HTTP2 -> alpn_https_tcp ~protocols:["h2"]
+    | Some `WS -> ws_cleartext_tcp
   in
   let%lwt connection = connect (Message.target request) in
-  send connection request
+  send' connection request
   (* TODO Have to monitor the closing of the response stream, and close the
      connection when that occurs. *)
