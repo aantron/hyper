@@ -1,3 +1,7 @@
+.PHONY : build
+build :
+	@dune build --no-print-directory
+
 TEST ?= test
 ROOT := $(shell [ -f ../dune-workspace ] && echo .. || echo .)
 
