@@ -1,13 +1,13 @@
 let server =
   Dream.router [
     Dream.get "/socket" (fun _request ->
-      Dream.websocket (fun response ->
-        match%lwt Dream.read response with
+      Dream.websocket (fun websocket ->
+        match%lwt Dream.receive websocket with
         | Some "Hello" ->
-          let%lwt () = Dream.write response "world!" in
-          Dream.close response
+          let%lwt () = Dream.send websocket "world!" in
+          Dream.close_websocket websocket
         | _ ->
-          Dream.close response));
+          Dream.close_websocket websocket));
   ]
   @@ Dream.not_found
 
@@ -17,9 +17,9 @@ let () =
 
 let response =
   Lwt_main.run begin
-    let%lwt response = Hyper.websocket "ws://127.0.0.1:8080/socket" in
-    let%lwt () = Hyper.write response "Hello" in
-    Hyper.read response
+    let%lwt websocket = Hyper.websocket "ws://127.0.0.1:8080/socket" in
+    let%lwt () = Hyper.send websocket "Hello" in
+    Hyper.receive websocket
   end
 
 let () =

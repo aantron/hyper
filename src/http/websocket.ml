@@ -100,7 +100,7 @@ let ws socket request =
   let websocket_handler socket =
     let response =
       Message.response ~status:`Switching_Protocols Stream.empty Stream.null in
-    let server_stream = Message.create_websocket response in
+    let (_, server_stream) = Message.create_websocket response in
     Lwt.wakeup_later receive_response response;
     Dream_httpaf.Websocket.client_websocket_handler server_stream socket
   in

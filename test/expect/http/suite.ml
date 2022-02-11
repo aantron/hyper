@@ -59,13 +59,13 @@ let server =
       Dream.respond "");
 
     Dream.get "/socket" (fun _request ->
-      Dream.websocket (fun response ->
-        match%lwt Dream.read response with
+      Dream.websocket (fun websocket ->
+        match%lwt Dream.receive websocket with
         | Some "foo" ->
-          let%lwt () = Dream.write response "bar" in
-          Dream.close response
+          let%lwt () = Dream.send websocket "bar" in
+          Dream.close_websocket websocket
         | _ ->
-          Dream.close response));
+          Dream.close_websocket websocket));
 
     Dream.get "/socket-redirect" (fun request ->
       let%lwt response = Dream.redirect request "/socket" in

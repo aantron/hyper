@@ -29,12 +29,18 @@ val post :
   ?server:handler ->
     string -> string -> string promise
 
+type websocket
+
 val websocket :
   (* ?headers:(string * string) list -> *)
   ?redirect_limit:int ->
   ?server:handler ->
-    string -> response promise
-    (* TODO This shouldn't return a low-level stream. *)
+    string -> websocket promise
+
+val send : ?text_or_binary:[ `Text | `Binary ] -> ?end_of_message:[ `End_of_message | `Continues ] -> websocket -> string -> unit promise
+val receive : websocket -> string option promise
+val receive_fragment : websocket -> (string * [ `Text | `Binary ] * [ `End_of_message | `Continues ]) option promise
+val close_websocket : ?code:int -> websocket -> unit promise
 
 
 
@@ -49,19 +55,11 @@ val request :
   string ->
     request
 
-val send : request -> response promise
+val run : request -> response promise
 
 val body : 'a message -> string promise
 
 val to_form_urlencoded : (string * string) list -> string
-
-
-
-val read : 'a message -> string option promise
-
-val write : ?kind:[< `Text | `Binary ] -> 'a message -> string -> unit promise
-
-val flush : 'a message -> unit promise
 
 
 

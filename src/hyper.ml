@@ -30,7 +30,9 @@ type method_ = Method.method_
 let request ?method_ ?headers ?(body = Stream.empty) target =
   Message.request ?method_ ~target ?headers Stream.null body
 
+(* TODO Rename this. *)
 let send = Hyper__http.Connect.no_pool ?transport:None
+let run = send
 
 let body = Message.body
 
@@ -40,14 +42,14 @@ let to_form_urlencoded = Formats.to_form_urlencoded
 
 
 
-let read message =
+(* let read message =
   Message.read (Message.client_stream message)
 
 let write ?kind message chunk =
   Message.write ?kind (Message.client_stream message) chunk
 
 let flush message =
-  Message.flush (Message.client_stream message)
+  Message.flush (Message.client_stream message) *)
 
 
 
@@ -77,7 +79,24 @@ let post ?(headers = []) ?redirect_limit ?(server = send) target the_body =
   let%lwt response = (follow_redirect ?redirect_limit server) request in
   body response
 
+(* TODO Move this to message.ml. *)
+type websocket =
+  Stream.stream * Stream.stream
+
 let websocket ?redirect_limit ?(server = send) target =
   let request = request ~method_:`GET target in
-  (follow_redirect ?redirect_limit server) request
-  (* TODO Check the response status... *)
+  let%lwt response = (follow_redirect ?redirect_limit server) request in
+  match Message.get_websocket response with
+  | None -> assert false (* TODO Real error. *)
+  | Some websocket -> Lwt.return websocket
+
+let send ?text_or_binary ?end_of_message (client_stream, _) data =
+  Message.send ?text_or_binary ?end_of_message client_stream data
+
+let receive (client_stream, _) =
+  Message.receive client_stream
+
+let receive_fragment (client_stream, _) =
+  Message.receive_fragment client_stream
+
+let close_websocket = Message.close_websocket
