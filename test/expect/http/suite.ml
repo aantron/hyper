@@ -72,13 +72,12 @@ let server =
       Dream.set_body response "foobar";
       Lwt.return response);
   ]
-  @@ Dream.not_found
 
 let start https nohttp test =
   if not nohttp then begin
     let port = Test_expect.Helpers.next_port () in
     let stop, stop_server = Lwt.wait () in
-    let stopped = Dream.serve ~port ~https ~stop server in
+    let stopped = Dream.serve ~port ~tls:https ~stop server in
     let test request =
       Test_expect.Helpers.set_port request port;
       test request

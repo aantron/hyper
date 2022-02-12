@@ -4,7 +4,6 @@ let server =
       let%lwt body = Dream.body request in
       Dream.respond (body ^ body));
   ]
-  @@ Dream.not_found
 
 let () =
   ignore (Dream.serve server);

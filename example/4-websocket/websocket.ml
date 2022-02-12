@@ -9,7 +9,6 @@ let server =
         | _ ->
           Dream.close_websocket websocket));
   ]
-  @@ Dream.not_found
 
 let () =
   ignore (Dream.serve server);

@@ -6,7 +6,6 @@ let server =
     Dream.get "/target" (fun _request ->
       Dream.respond "Hello, world!");
   ]
-  @@ Dream.not_found
 
 let () =
   ignore (Dream.serve server);
