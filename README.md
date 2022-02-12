@@ -38,8 +38,16 @@ Hyper.websocket : string -> websocket promise
 ```
 
 These support all the same Web protocols as Dream: HTTP/1, HTTP/2, TLS, and
-WebSocket, and they follow redirects. You can see early usage in the
-[examples][examples].
+WebSocket, and they follow redirects. The protocols are selected using URI
+schemes:
+
+```ocaml
+Hyper.get "http://google.com"
+Hyper.post "https://some.app/endpoint" "{}"
+Hyper.websocket "ws://some.site/socket"
+```
+
+You can see early usage in the [examples][examples].
 
 These are actually wrappers around a "stack" of `request -> response promise`
 handlers and client-side middlewares, but the elements of that stack are not
@@ -60,6 +68,24 @@ Hyper.close_websocket : websocket -> unit promise
 
 <br>
 
+## Composability
+
+A Hyper client and a Dream server have exactly the same type,
+`request -> response promise`.
+
+This means that the client's lowest layer can be implemented by swapping out
+connecting over the network by a direct call to an in-process Dream server,
+which can be useful for no-network testing.
+
+Conversely, a Dream server can pass the requests it receives to a Hyper client,
+thus acting as a proxy. Responses received from the proxy client can be directly
+returned by the server to *its* client.
+
+In all cases, all body streams and WebSockets get forwarded automatically as a
+side effect of the conventions followed by Hyper and Dream.
+
+<br>
+
 ## Roadmap
 
 - [ ] Restore [connection pooling and multiplexing](https://github.com/aantron/dream/blob/f69b95644a237be0aa3c9d3c6e29a7be32a5dbdb/src/hyper.ml#L76).
@@ -69,4 +95,4 @@ Hyper.close_websocket : websocket -> unit promise
 - [ ] Redirect cache.
 - [ ] Automatic decompression.
 - [ ] `wss://` (WebSockets over TLS).
-- [ ] Miscellania.
+- [ ] Many miscellania.
