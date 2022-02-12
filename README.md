@@ -96,3 +96,37 @@ side effect of the conventions followed by Hyper and Dream.
 - [ ] Automatic decompression.
 - [ ] `wss://` (WebSockets over TLS).
 - [ ] Many miscellania.
+
+<br>
+
+## Contact
+
+Open an [issue](https://github.com/aantron/dream/issues), or visit...
+
+- #dream on the [Reason Discord](https://discord.gg/2JTYRq2rYh).
+- #webdev on the [OCaml Discord](https://discord.gg/sx45hPkkWV)
+- The [OCaml Discuss forum](https://discuss.ocaml.org/).
+
+Highlight `@antron` to poke @aantron specifically.
+
+<br>
+
+## Contributing
+
+To work on Hyper, clone Dream and Hyper into a single Dune workspace:
+
+```
+mkdir my-directory
+cd my-directory
+touch dune-workspace
+git clone --recursive https://github.com/aantron/dream.git
+git clone https://github.com/aantron/hyper.git
+cd hyper
+```
+
+<br>
+
+## Acknowledgements
+
+As with Dream, Hyper makes extensive use of the http/af-like Web protocol stack
+by [Antonio Nuno Monteiro](https://github.com/anmonteiro).
