@@ -4,7 +4,6 @@ let server =
     Dream.get "/:text" (fun request ->
       Dream.respond (Dream.param request "text"));
   ]
-  @@ Dream.not_found
 
 let proxy =
   Dream.logger
