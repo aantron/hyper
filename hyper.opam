@@ -1,7 +1,7 @@
 opam-version: "2.0"
 
 synopsis: "Web client with HTTP/1, HTTP/2, TLS, and WebSocket support"
-tags: ["http" "web" "client" "websocket" "http2" "tls"]
+tags: ["http" "web" "client" "websocket" "http2" "tls" "dream"]
 
 license: "MIT"
 homepage: "https://github.com/aantron/hyper"
