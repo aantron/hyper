@@ -15,9 +15,10 @@ maintainer: "Anton Bachin <antonbachin@yahoo.com>"
 depends: [
   "dream-httpaf"
   "dream-pure"
+  "dune" {>= "2.7.0"}
   "lwt_ppx"
-  "ocaml"
   "mirage-crypto-rng" {>= "0.8.0"}
+  "ocaml" {>= "4.08.0"}
   "uri"
 
   "bisect_ppx" {with-test & >= "2.5.0"}  # --instrument-with.
