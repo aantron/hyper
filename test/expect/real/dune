@@ -1,0 +1,11 @@
+(library
+ (name test_real)
+ (libraries
+  base
+  dream
+  hyper
+  ppx_expect.common
+  ppx_inline_test.config
+  ppx_expect.config_types)
+ (inline_tests)
+ (preprocess (pps lwt_ppx ppx_expect)))

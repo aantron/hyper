@@ -51,7 +51,13 @@ type 'a promise = 'a Dream_pure.Message.promise
 let resolve target =
   let uri = Uri.of_string target in
   let host = Uri.host uri |> Option.get (* TODO Questonable. *)
-  and port = Uri.port uri |> Option.value ~default:80
+  and port =
+    match Uri.port uri with
+    | Some port -> port
+    | None ->
+      match Uri.scheme uri with
+      | Some ("https" | "wss") -> 443
+      | _ -> 80
   in
   let%lwt addresses =
     Lwt_unix.getaddrinfo host (string_of_int port) [Unix.(AI_FAMILY PF_INET)] in
