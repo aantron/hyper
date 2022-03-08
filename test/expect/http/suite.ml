@@ -35,7 +35,7 @@ let server =
       |> Dream.respond);
 
     Dream.get "/weird-response" (fun _request ->
-      Dream.respond ~code:599 ~headers:["Foo", "bar"] "");
+      Dream.respond ~code:599 ~headers:["Foo", "bar"] "baz");
 
     Dream.post "/echo" (fun request ->
       let%lwt body = Dream.body request in
@@ -451,6 +451,10 @@ let http ?(https = false) ?(nohttp = false) test =
   in
 
   (* Client aborts response stream with an exception. *)
+  (* TODO On nohttp, the server returns an already-set body directly to the
+     client. This body is not abortable, so the test wrongly "succeeds".
+     Aborting on nohttp should be tested by reading a chunk rather than reading
+     the body. *)
   let () =
     print_endline "test: response body aborted";
     Lwt_main.run begin
@@ -472,6 +476,10 @@ let http ?(https = false) ?(nohttp = false) test =
   in
 
   (* Read after end of response stream. *)
+  (* TODO As with the above test, this test should be changed to properly
+     exerise nohttp. It must use two streaming reads, rather than a read of the
+     body (which is already pre-set by the server) followed by a streaming
+     read. *)
   let () =
     print_endline "test: read after eof";
     Lwt_main.run begin

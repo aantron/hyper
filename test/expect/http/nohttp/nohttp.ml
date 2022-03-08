@@ -45,9 +45,9 @@ let%expect_test _ =
     test: request body closed by peer
 
     test: response body closed by client
-
+    foobar
     test: response body aborted
-    Exit
+    unexpected response
     test: read after eof
     foobar
-    None |}]
+    unexpected chunk |}]

@@ -33,7 +33,7 @@ let%expect_test _ =
     test: response
     599
     Foo: bar
-    Transfer-Encoding: chunked
+    Content-Length: 3
     test: request body
     foobar
     test: request body chunked
