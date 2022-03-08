@@ -15,9 +15,10 @@ module Stream = Dream_pure.Stream
 let https (connection : H2_lwt_unix.Client.SSL.t) (request : Message.request) =
 
   let h2_request : H2.Request.t =
+    Message.drop_content_length_headers request;
+    Message.lowercase_headers request;
     let headers =
       Message.all_headers request
-      |> List.map (fun (name, value) -> (String.lowercase_ascii name, value))
       |> H2.Headers.of_list
     and scheme = "https"
     and method_ =
