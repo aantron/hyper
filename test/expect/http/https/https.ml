@@ -29,7 +29,7 @@ let%expect_test _ =
     test: headers
     Foo: bar
     Baz: quux
-    Transfer-Encoding: chunked
+    Content-Length: 0
     test: response
     599
     Foo: bar

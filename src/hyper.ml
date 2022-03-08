@@ -27,8 +27,15 @@ type method_ = Method.method_
 
 
 (* TODO There is no way to create a request with a pipe using this function. *)
-let request ?method_ ?headers ?(body = Stream.empty) target =
-  Message.request ?method_ ~target ?headers Stream.null body
+let request ?method_ ?headers ?body target =
+  match body with
+  | None ->
+    let request =
+      Message.request ?method_ ~target ?headers Stream.null Stream.null in
+    Message.set_body request "";
+    request
+  | Some stream ->
+    Message.request ?method_ ~target ?headers Stream.null stream
 
 (* TODO Rename this. *)
 let send = Hyper__http.Connect.no_pool ?transport:None
