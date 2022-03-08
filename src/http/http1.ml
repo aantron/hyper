@@ -17,13 +17,9 @@ let general send_request client connection (request : Message.request) =
 
   (* The http/af request can be created right away. *)
   let httpaf_request : Httpaf.Request.t =
-    (* TODO Transfer-Encoding or Content-Length should be added only if neither
-       header is present, and the stream is known to be non-empty. The latter
-       can only be checked with some kind of stream hints API, which does not
-       exist right now. *)
+    Message.set_content_length_headers request;
     let headers =
       Message.all_headers request
-      |> fun headers -> ("Transfer-Encoding", "chunked")::headers
       |> Httpaf.Headers.of_list
     and method_ =
       Httpaf.Method.of_string

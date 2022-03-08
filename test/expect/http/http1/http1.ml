@@ -27,9 +27,9 @@ let%expect_test _ =
     test: anchor
     /target
     test: headers
-    Transfer-Encoding: chunked
     Foo: bar
     Baz: quux
+    Transfer-Encoding: chunked
     test: response
     599
     Foo: bar

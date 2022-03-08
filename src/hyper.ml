@@ -65,10 +65,7 @@ let get ?headers ?redirect_limit ?(server = send) target =
   body response
 
 (* TODO Error handling. *)
-(* TODO Don't always use TE: chunked. Also, this should be handled at the
-   transport level, since TE: chunked is not even valid for http2. *)
 let post ?(headers = []) ?redirect_limit ?(server = send) target the_body =
-  let headers = ("Transfer-Encoding", "chunked")::headers in
   let request =
     request
       ~method_:`POST
