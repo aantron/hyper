@@ -214,7 +214,7 @@ val websocket :
   (* ?headers:(string * string) list -> *)
   ?redirect_limit:int ->
   ?server:handler ->
-    string -> websocket promise
+    string -> (websocket, response) result promise
 
 type text_or_binary = [ `Text | `Binary ]
 type end_of_message = [ `End_of_message | `Continues ]

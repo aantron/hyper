@@ -123,8 +123,8 @@ let websocket ?redirect_limit ?(server = connect) target =
   let request = request ~method_:`GET target in
   let%lwt response = run ?redirect_limit ~server request in
   match Message.get_websocket response with
-  | Some websocket -> Lwt.return websocket
-  | None -> assert false (* TODO *)
+  | Some websocket -> Lwt.return (Ok websocket)
+  | None -> Lwt.return (Error response)
 
 type text_or_binary = [ `Text | `Binary ]
 type end_of_message = [ `End_of_message | `Continues ]

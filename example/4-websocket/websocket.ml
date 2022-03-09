@@ -16,7 +16,8 @@ let () =
 
 let response =
   Lwt_main.run begin
-    let%lwt websocket = Hyper.websocket "ws://127.0.0.1:8080/socket" in
+    let%lwt maybe_websocket = Hyper.websocket "ws://127.0.0.1:8080/socket" in
+    let websocket = Result.get_ok maybe_websocket in
     let%lwt () = Hyper.send websocket "Hello" in
     Hyper.receive websocket
   end
