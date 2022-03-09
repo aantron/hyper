@@ -6,8 +6,10 @@
 
 
 module Formats = Dream_pure.Formats
+module Logic = Hyper__logic
 module Message = Dream_pure.Message
 module Method = Dream_pure.Method
+module Status = Dream_pure.Status
 module Stream = Dream_pure.Stream
 
 
@@ -26,24 +28,39 @@ type method_ = Method.method_
 
 
 
-(* TODO There is no way to create a request with a pipe using this function. *)
-let request ?method_ ?headers ?body target =
-  match body with
-  | None ->
-    let request =
-      Message.request ?method_ ~target ?headers Stream.null Stream.null in
-    Message.set_body request "";
-    request
-  | Some stream ->
-    Message.request ?method_ ~target ?headers Stream.null stream
+let request ?method_ ?headers ?(body = "") target =
+  let request =
+    Message.request ?method_ ~target ?headers Stream.null Stream.null in
+  Message.set_body request body;
+  request
+
+let stream ?method_ ?headers ?(close = true) target callback =
+  let reader, writer = Stream.pipe () in
+  let client_stream = Stream.stream Stream.no_reader writer
+  and server_stream = Stream.stream reader Stream.no_writer in
+  let request =
+    Message.request ?method_ ~target ?headers client_stream server_stream in
+
+  Lwt.async begin fun () ->
+    if close then
+      match%lwt callback client_stream with
+      | () ->
+        Message.close client_stream
+      | exception exn ->
+        let%lwt () = Message.close client_stream in
+        raise exn
+    else
+      callback client_stream
+  end;
+
+  request
 
 (* TODO Rename this. *)
 let send = Hyper__http.Connect.no_pool ?transport:None
-let run = send
 
 let body = Message.body
 
-let follow_redirect = Hyper__logic.Redirect.follow_redirect
+(* let follow_redirect = Hyper__logic.Redirect.follow_redirect *)
 
 let to_form_urlencoded = Formats.to_form_urlencoded
 
@@ -60,7 +77,40 @@ let flush message =
 
 
 
-(* TODO Error handling. *)
+let default_middlewares redirect_limit =
+  Message.pipeline [
+    Logic.Headers.set_user_agent_header;
+    Logic.Redirect.follow_redirect ?redirect_limit;
+    Logic.Headers.set_host_header;
+  ]
+
+let run ?redirect_limit ?(server = send) request =
+  default_middlewares redirect_limit server request
+
+exception Response of response
+
+let () =
+  Printexc.register_printer begin function
+    | Response response ->
+      let status = Message.status response in
+      let reason =
+        match Status.status_to_reason status with
+        | None -> ""
+        | Some reason -> " " ^ reason
+      in
+      Printf.sprintf "Hyper.Response(%i%s)" (Status.status_to_int status) reason
+      |> Option.some
+    | _ ->
+      None
+  end
+
+(* TODO Note in the docs that the response body is closed. *)
+(* TODO LATER Consider eagerly reading 1K or 4K of the body before closing. *)
+let raise_response response =
+  let%lwt () = Message.close (Message.client_stream response) in
+  raise (Response response)
+
+(* TODO Remove most optional args from these high-level functions. *)
 let get ?headers ?redirect_limit ?(server = send) target =
   let request =
     request
@@ -68,20 +118,25 @@ let get ?headers ?redirect_limit ?(server = send) target =
       ?headers
       target
   in
-  let%lwt response = (follow_redirect ?redirect_limit server) request in
-  body response
+  let%lwt response = run ?redirect_limit ~server request in
+  if Message.status response = `OK then
+    body response
+  else
+    raise_response response
 
-(* TODO Error handling. *)
 let post ?(headers = []) ?redirect_limit ?(server = send) target the_body =
   let request =
     request
       ~method_:`POST
       ~headers
-      ~body:(Stream.string the_body)
+      ~body:the_body
       target
   in
-  let%lwt response = (follow_redirect ?redirect_limit server) request in
-  body response
+  let%lwt response = run ?redirect_limit ~server request in
+  if Message.status response = `OK then
+    body response
+  else
+    raise_response response
 
 (* TODO Move this to message.ml. *)
 type websocket =
@@ -89,10 +144,10 @@ type websocket =
 
 let websocket ?redirect_limit ?(server = send) target =
   let request = request ~method_:`GET target in
-  let%lwt response = (follow_redirect ?redirect_limit server) request in
+  let%lwt response = run ?redirect_limit ~server request in
   match Message.get_websocket response with
-  | None -> assert false (* TODO Real error. *)
   | Some websocket -> Lwt.return websocket
+  | None -> raise_response response
 
 let send ?text_or_binary ?end_of_message (client_stream, _) data =
   Message.send ?text_or_binary ?end_of_message client_stream data

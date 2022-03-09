@@ -14,8 +14,12 @@ and client = Dream_pure.Message.client
 and server = Dream_pure.Message.server
 and 'a promise = 'a Lwt.t
 and stream = Dream_pure.Stream.stream
+(* TODO Import the whole method set, etc. *)
+type method_ = Dream_pure.Method.method_
 
 
+
+exception Response of response
 
 val get :
   ?headers:(string * string) list ->
@@ -28,6 +32,35 @@ val post :
   ?redirect_limit:int ->
   ?server:handler ->
     string -> string -> string promise
+
+
+
+(* TODO How should the body be exposed? *)
+val request :
+  ?method_:[< method_ ] ->
+  ?headers:(string * string) list ->
+  ?body:string ->
+  string ->
+    request
+
+val stream :
+  ?method_:[< method_ ] ->
+  ?headers:(string * string) list ->
+  ?close:bool ->
+  string ->
+  (stream -> unit promise) ->
+    request
+
+val run :
+  ?redirect_limit:int ->
+  ?server:handler ->
+    request -> response promise
+
+
+
+val body : 'a message -> string promise
+
+
 
 type websocket
 
@@ -43,21 +76,6 @@ val receive_fragment : websocket -> (string * [ `Text | `Binary ] * [ `End_of_me
 val close_websocket : ?code:int -> websocket -> unit promise
 
 
-
-(* TODO Import the whole method set, etc. *)
-type method_ = Dream_pure.Method.method_
-
-(* TODO How should the body be exposed? *)
-val request :
-  ?method_:[< method_ ] ->
-  ?headers:(string * string) list ->
-  ?body:stream ->
-  string ->
-    request
-
-val run : request -> response promise
-
-val body : 'a message -> string promise
 
 val to_form_urlencoded : (string * string) list -> string
 

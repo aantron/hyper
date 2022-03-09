@@ -1,4 +1,0 @@
-(executable
- (name https)
- (libraries hyper)
- (preprocess (pps lwt_ppx)))

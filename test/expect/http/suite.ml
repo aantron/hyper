@@ -205,14 +205,11 @@ let http ?(https = false) ?(nohttp = false) test =
 
 
   (* Request bodies. *)
-  (* TODO The body length and/or TE headers should be placed automatically. *)
   let () =
     print_endline "test: request body";
     Lwt_main.run begin
-      let body = Stream.string "foobar" in
-      (* let headers = ["Content-Length", "6"] in *)
       let request =
-        Hyper.request ~method_:`POST ~body "http://127.0.0.1/echo" in
+        Hyper.request ~method_:`POST ~body:"foobar" "http://127.0.0.1/echo" in
       let%lwt response = test request in
       let%lwt response = Hyper.body response in
       print_endline response;
@@ -223,10 +220,8 @@ let http ?(https = false) ?(nohttp = false) test =
   let () =
     print_endline "test: request body chunked";
     Lwt_main.run begin
-      let body = Stream.string "foobar" in
-      (* let headers = ["Transfer-Encoding", "chunked"] in *)
       let request =
-        Hyper.request ~method_:`POST ~body "http://127.0.0.1/echo" in
+        Hyper.request ~method_:`POST ~body:"foobar" "http://127.0.0.1/echo" in
       let%lwt response = test request in
       let%lwt response = Hyper.body response in
       print_endline response;
@@ -335,11 +330,11 @@ let http ?(https = false) ?(nohttp = false) test =
   let () =
     print_endline "test: early exception";
     Lwt_main.run begin
-      let body = Stream.string "foobar" in
-      Stream.abort body Exit;
-      (* let headers = ["Transfer-Encoding", "chunked"] in *)
       let request =
-        Hyper.request ~method_:`POST ~body "http://127.0.0.1/echo" in
+        Hyper.stream ~method_:`POST "http://127.0.0.1/echo" (fun stream ->
+          Stream.abort stream Exit;
+          Lwt.return_unit)
+      in
       match%lwt test request with
       | exception Exit ->
         print_endline "Exit";
@@ -395,10 +390,8 @@ let http ?(https = false) ?(nohttp = false) test =
   let () =
     print_endline "test: double body";
     Lwt_main.run begin
-      let body = Stream.string "foobar" in
-      let headers = ["Content-Length", "6"] in
       let request =
-        Hyper.request ~method_:`POST ~headers ~body "http://127.0.0.1/echo" in
+        Hyper.request ~method_:`POST ~body:"foobar" "http://127.0.0.1/echo" in
       let%lwt response = test request in
       let%lwt response' = Hyper.body response in
       print_endline response';
@@ -417,10 +410,8 @@ let http ?(https = false) ?(nohttp = false) test =
   let () =
     print_endline "test: request body closed by peer";
     Lwt_main.run begin
-      let body = Stream.string "foobar" in
-      (* let headers = ["Transfer-Encoding", "chunked"] in *)
       let request =
-        Hyper.request ~method_:`POST ~body "http://127.0.0.1/close" in
+        Hyper.request ~method_:`POST ~body:"foobar" "http://127.0.0.1/close" in
       let%lwt response = test request in
       let%lwt response = Hyper.body response in
       print_endline response;
@@ -437,10 +428,8 @@ let http ?(https = false) ?(nohttp = false) test =
   let () =
     print_endline "test: response body closed by client";
     Lwt_main.run begin
-      let body = Stream.string "foobar" in
-      (* let headers = ["Transfer-Encoding", "chunked"] in *)
       let request =
-        Hyper.request ~method_:`POST ~body "http://127.0.0.1/echo" in
+        Hyper.request ~method_:`POST ~body:"foobar" "http://127.0.0.1/echo" in
       let%lwt response = test request in
       let stream = Message.client_stream response in
       Stream.close stream 1000;
@@ -458,10 +447,8 @@ let http ?(https = false) ?(nohttp = false) test =
   let () =
     print_endline "test: response body aborted";
     Lwt_main.run begin
-      let body = Stream.string "foobar" in
-      (* let headers = ["Transfer-Encoding", "chunked"] in *)
       let request =
-        Hyper.request ~method_:`POST ~body "http://127.0.0.1/echo" in
+        Hyper.request ~method_:`POST ~body:"foobar" "http://127.0.0.1/echo" in
       let%lwt response = test request in
       let stream = Message.client_stream response in
       Stream.abort stream Exit;
@@ -483,9 +470,8 @@ let http ?(https = false) ?(nohttp = false) test =
   let () =
     print_endline "test: read after eof";
     Lwt_main.run begin
-      let body = Stream.string "foobar" in
       let request =
-        Hyper.request ~method_:`POST ~body "http://127.0.0.1/echo" in
+        Hyper.request ~method_:`POST ~body:"foobar" "http://127.0.0.1/echo" in
       let%lwt response = test request in
       let%lwt response' = Hyper.body response in
       print_endline response';

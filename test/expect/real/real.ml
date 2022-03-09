@@ -6,29 +6,12 @@
 
 
 let%expect_test _ =
-  Lwt_main.run begin
-    let%lwt response =
-      Hyper.run
-        (Hyper.request "https://github.com" ~headers:["Host", "github.com"]) in
-    response
-    |> Dream_pure.Message.status
-    |> Dream_pure.Status.status_to_string
-    |> print_endline;
-    Lwt.return_unit
-  end;
-  [%expect {| OK |}]
+  ignore (Lwt_main.run (Hyper.get "https://github.com"));
+  [%expect {| |}]
 
 let%expect_test _ =
   let url =
-    "https://login.microsoftonline.com/consumers/v2.0/.well-known/openid-configuration" in
-  Lwt_main.run begin
-    let%lwt response =
-      Hyper.run
-        (Hyper.request url ~headers:["Host", "login.microsoftonline.com"]) in
-    response
-    |> Dream_pure.Message.status
-    |> Dream_pure.Status.status_to_string
-    |> print_endline;
-    Lwt.return_unit
-  end;
-  [%expect {| OK |}]
+    "https://login.microsoftonline.com/consumers/v2.0/.well-known/" ^
+    "openid-configuration" in
+  ignore (Lwt_main.run (Hyper.get url));
+  [%expect {| |}]
