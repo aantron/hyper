@@ -119,8 +119,8 @@ let close = Message.close
 type websocket =
   Stream.stream * Stream.stream
 
-let websocket ?redirect_limit ?(server = connect) target =
-  let request = request ~method_:`GET target in
+let websocket ?(headers = []) ?redirect_limit ?(server = connect) target =
+  let request = request ~method_:`GET ~headers target in
   let%lwt response = run ?redirect_limit ~server request in
   match Message.get_websocket response with
   | Some websocket -> Lwt.return (Ok websocket)

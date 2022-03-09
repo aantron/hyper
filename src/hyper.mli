@@ -208,10 +208,9 @@ val close : stream -> unit promise
 
 type websocket
 
-(* TODO Restore ?headers. *)
 (* TODO Either build in the callback, or provide a with_websocket. *)
 val websocket :
-  (* ?headers:(string * string) list -> *)
+  ?headers:(string * string) list ->
   ?redirect_limit:int ->
   ?server:handler ->
     string -> (websocket, response) result promise
