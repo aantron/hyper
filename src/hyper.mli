@@ -5,6 +5,18 @@
 
 
 
+(** {1 Quick use} *)
+
+val get :
+  ?headers:(string * string) list ->
+    string -> string
+
+val post :
+  ?headers:(string * string) list ->
+    string -> string -> string
+
+
+
 (** {1 Types} *)
 
 type request = client message
@@ -19,24 +31,7 @@ and client = Dream_pure.Message.client
 and server = Dream_pure.Message.server
 and 'a promise = 'a Lwt.t
 
-
-
-(** {1 Quick use} *)
-
-(* TODO Make these non-promise-valued. *)
 exception Response of response
-
-val get :
-  ?headers:(string * string) list ->
-  ?redirect_limit:int ->
-  ?server:handler ->
-    string -> string promise
-
-val post :
-  ?headers:(string * string) list ->
-  ?redirect_limit:int ->
-  ?server:handler ->
-    string -> string -> string promise
 
 
 

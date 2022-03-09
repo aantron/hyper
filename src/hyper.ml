@@ -173,21 +173,22 @@ let raise_response response =
   let%lwt () = Message.close (Message.client_stream response) in
   raise (Response response)
 
-(* TODO Remove most optional args from these high-level functions. *)
-let get ?headers ?redirect_limit ?(server = connect) target =
+let get ?headers target =
   let request =
     request
       ~method_:`GET
       ?headers
       target
   in
-  let%lwt response = run ?redirect_limit ~server request in
-  if Message.status response = `OK then
-    body response
-  else
-    raise_response response
+  Lwt_main.run begin
+    let%lwt response = run request in
+    if Message.status response = `OK then
+      body response
+    else
+      raise_response response
+  end
 
-let post ?(headers = []) ?redirect_limit ?(server = connect) target the_body =
+let post ?(headers = []) target the_body =
   let request =
     request
       ~method_:`POST
@@ -195,8 +196,10 @@ let post ?(headers = []) ?redirect_limit ?(server = connect) target the_body =
       ~body:the_body
       target
   in
-  let%lwt response = run ?redirect_limit ~server request in
-  if Message.status response = `OK then
-    body response
-  else
-    raise_response response
+  Lwt_main.run begin
+    let%lwt response = run request in
+    if Message.status response = `OK then
+      body response
+    else
+      raise_response response
+  end
