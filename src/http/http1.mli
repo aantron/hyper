@@ -5,6 +5,8 @@
 
 
 
+module Httpaf_lwt_unix = Dream_httpaf__lwt_unix.Httpaf_lwt_unix
+
 module Message = Dream_pure.Message
 
 

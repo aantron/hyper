@@ -5,6 +5,9 @@
 
 
 
+module H2 = Dream_h2.H2
+module H2_lwt_unix = Dream_h2_lwt_unix.H2_lwt_unix
+
 module Message = Dream_pure.Message
 module Method = Dream_pure.Method
 module Stream = Dream_pure.Stream

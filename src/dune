@@ -4,14 +4,14 @@
  (modules hyper)
  (libraries
   dream-pure
-  dream-httpaf.h2-lwt-unix
-  dream-httpaf.httpaf-lwt-unix
+  dream-httpaf.dream-h2-lwt-unix
+  dream-httpaf.dream-httpaf_-lwt-unix
   hyper.http
   hyper.logic
   lwt
   lwt.unix
   lwt_ssl
   ssl
-  dream-httpaf.websocketaf-lwt-unix
+  dream-httpaf.dream-websocketaf-lwt-unix
  )
  (preprocess (pps lwt_ppx)))

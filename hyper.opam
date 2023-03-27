@@ -17,7 +17,8 @@ depends: [
   "dream-pure"
   "dune" {>= "2.7.0"}
   "lwt_ppx"
-  "mirage-crypto-rng" {>= "0.8.0"}
+  "mirage-crypto-rng"
+  "mirage-crypto-rng-lwt"
   "ocaml" {>= "4.08.0"}
   "uri"
 

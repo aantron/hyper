@@ -5,6 +5,9 @@
 
 
 
+module Httpaf = Dream_httpaf_.Httpaf
+module Websocketaf_lwt_unix = Dream_websocketaf_lwt_unix.Websocketaf_lwt_unix
+
 module Message = Dream_pure.Message
 module Stream = Dream_pure.Stream
 
