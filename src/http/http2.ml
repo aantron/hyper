@@ -72,7 +72,7 @@ let https (connection : H2_lwt_unix.Client.SSL.t) (request : Message.request) =
         exn the_exn
       | None ->
         exn_handler := exn;
-        H2.Body.schedule_read
+        H2.Body.Reader.schedule_read
           h2_response_body
           ~on_eof:(fun () ->
             exn_handler := ignore;
@@ -82,7 +82,7 @@ let https (connection : H2_lwt_unix.Client.SSL.t) (request : Message.request) =
             data buffer off len true false)
 
     and close _code =
-      H2.Body.close_reader h2_response_body
+      H2.Body.Reader.close h2_response_body
 
     and abort exn =
       H2.Client_connection.report_exn connection.connection exn;
@@ -114,7 +114,7 @@ let https (connection : H2_lwt_unix.Client.SSL.t) (request : Message.request) =
       (Message.server_stream request) ~data ~flush ~ping ~pong ~close ~exn
 
   and data buffer offset length _binary _fin =
-    H2.Body.write_bigstring
+    H2.Body.Writer.write_bigstring
       h2_request_body_writer
       ~off:offset
       ~len:length
@@ -122,14 +122,14 @@ let https (connection : H2_lwt_unix.Client.SSL.t) (request : Message.request) =
     bytes_since_flush := !bytes_since_flush + length;
     if !bytes_since_flush >= 4096 then begin
       bytes_since_flush := 0;
-      H2.Body.flush h2_request_body_writer send
+      H2.Body.Writer.flush h2_request_body_writer send
     end
     else
       send ()
 
   and flush () =
     bytes_since_flush := 0;
-    H2.Body.flush h2_request_body_writer send
+    H2.Body.Writer.flush h2_request_body_writer send
 
   and ping _buffer _offset _length =
     send ()
@@ -138,7 +138,7 @@ let https (connection : H2_lwt_unix.Client.SSL.t) (request : Message.request) =
     send ()
 
   and close _code =
-    H2.Body.close_writer h2_request_body_writer
+    H2.Body.Writer.close h2_request_body_writer
 
   and exn exn =
     H2.Client_connection.report_exn connection.connection exn;
