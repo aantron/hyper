@@ -11,7 +11,7 @@
   dream-httpaf.websocketaf
   dream-httpaf.websocketaf-lwt-unix
   mirage-crypto-rng
-  mirage-crypto-rng.lwt
+  mirage-crypto-rng-lwt
   uri
  )
  (preprocess (pps lwt_ppx))

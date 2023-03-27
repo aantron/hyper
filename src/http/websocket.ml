@@ -11,7 +11,7 @@ module Stream = Dream_pure.Stream
 
 
 let () =
-  Mirage_crypto_rng_lwt.initialize ()
+  Mirage_crypto_rng_lwt.initialize (module Mirage_crypto_rng.Fortuna)
 
 
 
