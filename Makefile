@@ -2,7 +2,7 @@
 build :
 	@dune build --no-print-directory
 
-TEST ?= test
+TEST ?= test/expect/http
 ROOT := $(shell [ -f ../dune-workspace ] && echo .. || echo .)
 
 .PHONY : test
