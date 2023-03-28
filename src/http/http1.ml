@@ -118,7 +118,7 @@ let general send_request client connection (request : Message.request) =
   let httpaf_request_body_writer =
     send_request
       client
-      ?flush_headers_immediately:(Some false)
+      ?flush_headers_immediately:(Some true)
       httpaf_request
       ~error_handler
       ~response_handler
