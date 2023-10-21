@@ -1,0 +1,12 @@
+(executable
+ (name main)
+ (libraries
+  dream-pure
+  hyper
+  lwt
+  uri
+  str
+  ocolor
+  yojson
+ )
+ (preprocess (pps lwt_ppx)))
