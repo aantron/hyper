@@ -21,8 +21,13 @@ URL
     
     You can also use a shorthand for localhost
     
-        $ hyper :3000                    # => http://localhost:3000
-        $ hyper :/foo                    # => http://localhost/foo
+        $ hyper //:3000                   # => http://localhost:3000
+        $ hyper //:3000/foo               # => http://localhost:3000/foo
+        $ hyper /foo                      # => http://localhost/foo
+        $ hyper foo                       # => http://localhost/foo
+
+    Incorrect usage examples. httpie handles it as port number.
+        $ hyper :3000                     # => http://localhost/3000
       
 REQUEST_ITEM
     Optional key-value pairs to be included in the request. The separator used
@@ -113,7 +118,7 @@ type color_scheme = {
   error: Format.stag;
   info: Format.stag;
   key: Format.stag;
-  value: Format.stag;
+  string_value: Format.stag;
   header_key: Format.stag;
 }
 
@@ -121,7 +126,7 @@ let colors = {
   error = Format.String_tag "red";
   info = Format.String_tag "green";
   key = Format.String_tag "blue";
-  value = Format.String_tag "yellow";
+  string_value = Format.String_tag "c6(3,2,0)";
   header_key = Format.String_tag "cyan";
 }
 
@@ -150,12 +155,12 @@ and parse_url argv start command =
   then command
   else
   let next = start + 1 in
-  let r = Str.regexp "[A-Za-z]+" in (*regular expression testing whether the given string is HTTP method*)
+  let r = Str.regexp "[A-Z]+" in (*regular expression testing whether the given string is HTTP method*)
   if (Array.length argv) - start <= 1
     || String.starts_with ~prefix:"-" argv.(next)
     || Str.string_match r argv.(start) 0 = false
     || String.length command.request.verb != 0
-  then parse_command_line argv next { command with request = { command.request with url = "//" ^ argv.(start) }}
+  then parse_command_line argv next { command with request = { command.request with url = argv.(start) }}
   else parse_url argv next { command with request = { command.request with verb = String.uppercase_ascii argv.(start) }}
 
 and parse_request_item argv start command =
@@ -226,7 +231,7 @@ let rec print_json ppf json deep =
   | `Bool value -> Bool.to_string value |> Format.pp_print_string ppf
   | `Int value -> Int.to_string value |> Format.pp_print_string ppf
   | `Float value -> Float.to_string value |> Format.pp_print_string ppf
-  | `String value -> Format.fprintf ppf "%a\"%s\"%a" Format.pp_open_stag colors.value (String.escaped value) Format.pp_close_stag ()
+  | `String value -> Format.fprintf ppf "%a\"%s\"%a" Format.pp_open_stag colors.string_value (String.escaped value) Format.pp_close_stag ()
   | `Assoc obj ->
     Format.fprintf ppf "{";
     print_json_key_value ppf obj deep;
@@ -298,8 +303,10 @@ let () =
     in
     Lwt_main.run begin
       let parsed_uri =  (cmd.request.url |> Uri.of_string |> Uri.with_query') (cmd.request.url_parameters |> List.rev) in
-      if List.mem VERBOSE cmd.options.flags
-        then Format.fprintf formatter "@{<green>Parsed URI@}: %a%a" Uri.pp parsed_uri Format.pp_print_newline ();
+      if List.mem VERBOSE cmd.options.flags then (
+        Format.fprintf formatter "@{<green>String URI@}: %s%a" cmd.request.url Format.pp_print_newline ();
+        Format.fprintf formatter "@{<green>Parsed URI@}: %a%a" Uri.pp parsed_uri Format.pp_print_newline ();
+      );
       let target_uri =
         let uri_with_default_scheme =
           match Uri.scheme parsed_uri with
@@ -364,16 +371,21 @@ let () =
           raise_response response
       in
       (*Format and prettify response depending on its type*)
-      let content_type = Message.header response "Content-Type" in
-      let () = match content_type with
-      | Some "application/json" -> 
-        let json_response = Yojson.Basic.from_string content in
-        Format.fprintf formatter "@[<hv 0>";
-        print_json formatter json_response 0;
-        Format.fprintf formatter "@]";
-        Format.pp_print_newline formatter ()
-      (*TODO: Prettify other content type*)
-      | _ -> Format.pp_print_string formatter content
+      let content_type = Message.header response "Content-Type"
+      in
+      let get_media_type = function
+        | Some ct -> Some (ct |> (String.split_on_char ';') |> List.hd)
+        | None -> None
+      in
+      let () = match get_media_type content_type with
+        | Some "application/json" -> 
+          let json_response = Yojson.Basic.from_string content in
+          Format.fprintf formatter "@[<hv 0>";
+          print_json formatter json_response 0;
+          Format.fprintf formatter "@]";
+          Format.pp_print_newline formatter ()
+        (*TODO: Prettify other content type*)
+        | _ -> Format.pp_print_string formatter content
       in
       Format.pp_print_newline formatter ();
       Format.pp_print_flush formatter ();
