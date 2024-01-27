@@ -233,32 +233,33 @@ let rec print_json ppf json deep =
   | `Float value -> Float.to_string value |> Format.pp_print_string ppf
   | `String value -> Format.fprintf ppf "%a\"%s\"%a" Format.pp_open_stag colors.string_value (String.escaped value) Format.pp_close_stag ()
   | `Assoc obj ->
+    Format.pp_open_box ppf 0;
     Format.fprintf ppf "{";
-    print_json_key_value ppf obj deep;
+    print_json_key_value ppf obj deep
   | `List v ->
-    Format.pp_open_hovbox ppf 0;
+    Format.pp_open_box ppf 0;
     Format.pp_print_string ppf "[";
     print_json_array ppf v deep
-and print_json_key_value ppf obj deep=
+and print_json_key_value ppf obj deep =
   match obj with
   | [] ->
-    Format.pp_print_break ppf 1 deep;
-    Format.pp_print_string ppf "}"
+    Format.pp_print_break ppf 1 0;
+    Format.pp_print_string ppf "}";
+    Format.pp_close_box ppf ()
   | (key, json_value)::t ->
-    let next_deep = deep + 2 in
-    Format.pp_print_break ppf 1 next_deep;
+    Format.pp_print_break ppf 1 deep;
     Format.fprintf ppf "%a\"%s\"%a: " Format.pp_open_stag colors.key (String.escaped key) Format.pp_close_stag ();
-    print_json ppf json_value next_deep;
+    print_json ppf json_value deep;
     if List.length t > 0 then Format.fprintf ppf ",";
     print_json_key_value ppf t deep
 and print_json_array ppf v deep =
   match v with
   | [] ->
-    Format.pp_print_break ppf 1 deep;
+    Format.pp_print_break ppf 1 0;
     Format.pp_print_string ppf "]";
     Format.pp_close_box ppf ()
   | value::t ->
-    Format.pp_print_break ppf 1 2;
+    Format.pp_print_break ppf 1 deep;
     print_json ppf value deep;
     if List.length t > 0 then Format.fprintf ppf ",";
     print_json_array ppf t deep
@@ -281,7 +282,8 @@ let add_header cmd headers =
 
 let () =
   let formatter = Format.std_formatter in
-  Ocolor_format.prettify_formatter formatter;
+  if Unix.isatty Unix.stdout
+  then Ocolor_format.prettify_formatter formatter;
   try 
     let parsed_cmd = parse_command_line Sys.argv 1 initial_command in
     if List.mem HELP parsed_cmd.options.flags
@@ -352,6 +354,7 @@ let () =
       if List.mem VERBOSE cmd.options.flags then (
         (*TODO: Print request*)
       );
+
       let%lwt response = Hyper.run request in
       let response_status = Message.status response in
       (*Print response status*)
@@ -380,8 +383,8 @@ let () =
       let () = match get_media_type content_type with
         | Some "application/json" -> 
           let json_response = Yojson.Basic.from_string content in
-          Format.fprintf formatter "@[<hv 0>";
-          print_json formatter json_response 0;
+          Format.fprintf formatter "@[";
+          print_json formatter json_response 2;
           Format.fprintf formatter "@]";
           Format.pp_print_newline formatter ()
         (*TODO: Prettify other content type*)

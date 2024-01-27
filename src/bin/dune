@@ -4,6 +4,7 @@
   dream-pure
   hyper
   lwt
+  lwt.unix
   uri
   str
   ocolor
