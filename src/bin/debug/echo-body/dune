@@ -1,0 +1,4 @@
+(executable
+ (name echo)
+ (libraries dream hyper)
+ (preprocess (pps lwt_ppx)))

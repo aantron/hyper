@@ -9,5 +9,6 @@
   str
   ocolor
   yojson
+  hyper__cli_util
  )
  (preprocess (pps lwt_ppx)))

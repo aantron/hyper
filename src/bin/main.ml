@@ -114,15 +114,7 @@ let option_requirements : option_specification list = [
   Flag ("-help", "", (fun () -> HELP), (fun (ppf) -> Format.fprintf ppf "Show this help message and exit."));
 ]
 
-type color_scheme = {
-  error: Format.stag;
-  info: Format.stag;
-  key: Format.stag;
-  string_value: Format.stag;
-  header_key: Format.stag;
-}
-
-let colors = {
+let colors : Hyper__cli_util.Message_printer.color_scheme = {
   error = Format.String_tag "red";
   info = Format.String_tag "green";
   key = Format.String_tag "blue";
@@ -225,45 +217,6 @@ let print_help ppf =
   ) option_requirements;
   Format.fprintf ppf "@]@."
 
-let rec print_json ppf json deep =
-  match json with
-  | `Null -> "null" |> Format.pp_print_string ppf
-  | `Bool value -> Bool.to_string value |> Format.pp_print_string ppf
-  | `Int value -> Int.to_string value |> Format.pp_print_string ppf
-  | `Float value -> Float.to_string value |> Format.pp_print_string ppf
-  | `String value -> Format.fprintf ppf "%a\"%s\"%a" Format.pp_open_stag colors.string_value (String.escaped value) Format.pp_close_stag ()
-  | `Assoc obj ->
-    Format.pp_open_box ppf 0;
-    Format.fprintf ppf "{";
-    print_json_key_value ppf obj deep
-  | `List v ->
-    Format.pp_open_box ppf 0;
-    Format.pp_print_string ppf "[";
-    print_json_array ppf v deep
-and print_json_key_value ppf obj deep =
-  match obj with
-  | [] ->
-    Format.pp_print_break ppf 1 0;
-    Format.pp_print_string ppf "}";
-    Format.pp_close_box ppf ()
-  | (key, json_value)::t ->
-    Format.pp_print_break ppf 1 deep;
-    Format.fprintf ppf "%a\"%s\"%a: " Format.pp_open_stag colors.key (String.escaped key) Format.pp_close_stag ();
-    print_json ppf json_value deep;
-    if List.length t > 0 then Format.fprintf ppf ",";
-    print_json_key_value ppf t deep
-and print_json_array ppf v deep =
-  match v with
-  | [] ->
-    Format.pp_print_break ppf 1 0;
-    Format.pp_print_string ppf "]";
-    Format.pp_close_box ppf ()
-  | value::t ->
-    Format.pp_print_break ppf 1 deep;
-    print_json ppf value deep;
-    if List.length t > 0 then Format.fprintf ppf ",";
-    print_json_array ppf t deep
-
 let rec print_headers ppf headers =
   match headers with
   | [] -> Format.pp_print_newline ppf ()
@@ -279,6 +232,11 @@ let raise_response response =
 let add_header cmd headers =
   let unique_headers = List.filter (fun (h) -> List.mem h cmd.request.headers = false) headers in
   { cmd with request = { cmd.request with headers = unique_headers @ cmd.request.headers }}
+
+let get_media_type = function
+  | Some ct -> let mime_type = (ct |> (String.split_on_char ';') |> List.hd |> (String.split_on_char '/')) in
+      Some (List.hd mime_type, List.nth mime_type 1)
+  | None -> None
 
 let () =
   let formatter = Format.std_formatter in
@@ -361,38 +319,35 @@ let () =
       Format.fprintf formatter "%aHTTP%a/%a1.1 %i%a %a%s%a"
         Format.pp_open_stag colors.key Format.pp_close_stag ()
         Format.pp_open_stag colors.key (Status.status_to_int response_status) Format.pp_close_stag ()
-        Format.pp_open_stag colors.header_key (Status.status_to_string response_status) Format.pp_close_stag ()
-      ;
+        Format.pp_open_stag colors.header_key (Status.status_to_string response_status) Format.pp_close_stag ();
       Format.pp_print_newline formatter ();
       let headers = Message.all_headers response in
       print_headers formatter headers;
-      let%lwt content =
-        if response_status = `OK then
-          Hyper.body response
-        else
-          (*TODO: Handle error responses and show them*)
-          raise_response response
-      in
-      (*Format and prettify response depending on its type*)
-      let content_type = Message.header response "Content-Type"
-      in
-      let get_media_type = function
-        | Some ct -> Some (ct |> (String.split_on_char ';') |> List.hd)
-        | None -> None
-      in
-      let () = match get_media_type content_type with
-        | Some "application/json" -> 
-          let json_response = Yojson.Basic.from_string content in
-          Format.fprintf formatter "@[";
-          print_json formatter json_response 2;
-          Format.fprintf formatter "@]";
-          Format.pp_print_newline formatter ()
-        (*TODO: Prettify other content type*)
-        | _ -> Format.pp_print_string formatter content
-      in
-      Format.pp_print_newline formatter ();
-      Format.pp_print_flush formatter ();
-      Lwt.return_unit
+      if response_status <> `OK then
+        (*TODO: Handle error responses and show them*)
+        raise_response response
+      else
+        (*Format and prettify response depending on its type*)
+        let content_type = Message.header response "Content-Type" in
+        let media_type = get_media_type content_type in
+        let%lwt content = match media_type with
+          | Some ("text", _) | Some ("application", "json") -> let%lwt body = Hyper.body response in Lwt.return(Some body)
+          | _ -> Lwt.return_none
+        in
+        let () = match content with
+          | Some body -> (
+            match media_type with
+            | Some ("application", "json") -> Hyper__cli_util.Message_printer.print_json_content ~colors:colors body formatter
+            (*TODO: Prettify other content type*)
+            | _ ->
+              Format.pp_print_string formatter body;
+              Format.pp_print_newline formatter ();
+              Format.pp_print_flush formatter ())
+          | None ->
+              print_endline "+-----------------------------------------+";
+              print_endline "| NOTE: binary data not shown in terminal |";
+              print_endline "+-----------------------------------------+"; in
+              Lwt.return_unit
     end
   with
   | Invalid_command_argument msg -> print_error formatter msg
