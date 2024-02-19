@@ -240,27 +240,24 @@ let get_media_type = function
 
 let () =
   let formatter = Format.std_formatter in
-  if Unix.isatty Unix.stdout
-  then Ocolor_format.prettify_formatter formatter;
+  if Unix.isatty Unix.stdout then
+    Ocolor_format.prettify_formatter formatter;
   try 
     let parsed_cmd = parse_command_line Sys.argv 1 initial_command in
-    if List.mem HELP parsed_cmd.options.flags
-    then print_help formatter
+    if List.mem HELP parsed_cmd.options.flags then
+      print_help formatter
     else
-    let cmd_with_verb = if String.length parsed_cmd.request.verb == 0
-      then if List.length parsed_cmd.request.data_fields > 0
-        then { parsed_cmd with request = { parsed_cmd.request with verb = "POST" }}
-        else { parsed_cmd with request = { parsed_cmd.request with verb = "GET" }}
-      else parsed_cmd
-    in
-    let cmd = if List.length cmd_with_verb.request.data_fields > 0
-      then if List.mem FORM cmd_with_verb.options.flags
-        then
+    let cmd_with_verb = if String.length parsed_cmd.request.verb == 0 then
+      if List.length parsed_cmd.request.data_fields > 0 then
+        { parsed_cmd with request = { parsed_cmd.request with verb = "POST" }}
+      else { parsed_cmd with request = { parsed_cmd.request with verb = "GET" }}
+    else parsed_cmd in
+    let cmd = if List.length cmd_with_verb.request.data_fields > 0 then
+      if List.mem FORM cmd_with_verb.options.flags then
           add_header cmd_with_verb [("Content-Type", "application/x-www-form-urlencoded")]
-        else
+      else
           add_header cmd_with_verb [("Content-Type", "application/json"); ("Accept", "application/json")]
-      else cmd_with_verb
-    in
+    else cmd_with_verb in
     Lwt_main.run begin
       let parsed_uri =  (cmd.request.url |> Uri.of_string |> Uri.with_query') (cmd.request.url_parameters |> List.rev) in
       if List.mem VERBOSE cmd.options.flags then (
@@ -281,11 +278,21 @@ let () =
         Format.fprintf formatter "@{<green>Target URI@}: %a%a" Uri.pp target_uri Format.pp_print_newline ();
         Format.pp_print_newline formatter ();
       );
-      (*Handle data fields. There are two types of them: string and non-string. First one may be
-        serialized in two different way: as form data and as json. The second one only as json.*)
-      let body = if List.length cmd.request.data_fields > 0
-        then if List.mem FORM cmd.options.flags
-          then
+      let rec read_stdic out_stream =
+        (*Read data from stdin*)
+        let%lwt line = Lwt_io.read_line_opt Lwt_io.stdin in
+        match line with
+        | None -> Hyper.close out_stream
+        | Some chunk ->
+          let%lwt () = Hyper.write out_stream chunk in
+          let%lwt () = Hyper.flush out_stream in
+          read_stdic out_stream
+      in
+      let request = if Unix.isatty Unix.stdin then
+        (*Handle data fields. There are two types of them: string and non-string. First one may be
+          serialized in two different way: as form data and as json. The second one only as json.*)
+        let body = if List.length cmd.request.data_fields > 0 then
+          if List.mem FORM cmd.options.flags then
             let data_fields = List.map (fun (d) ->
               match d with
               | StringData (key, value) -> (key, [value])
@@ -302,12 +309,18 @@ let () =
             ) cmd.request.data_fields) in
             Some (Yojson.Basic.to_string json_data)
         else None
-      in
-      let request = Hyper.request
-        ?method_:(Some (`Method cmd.request.verb))
-        ?headers:(Some cmd.request.headers)
-        ?body:body
-        (Uri.to_string target_uri)
+        in
+        Hyper.request
+          ?method_:(Some (`Method cmd.request.verb))
+          ?headers:(Some cmd.request.headers)
+          ?body:body
+          (Uri.to_string target_uri)
+      else
+        Hyper.stream
+          ?method_:(Some (`Method cmd.request.verb))
+          ?headers:(Some cmd.request.headers)
+          (Uri.to_string target_uri)
+          (fun (request_stream) -> read_stdic request_stream)
       in
       if List.mem VERBOSE cmd.options.flags then (
         (*TODO: Print request*)
@@ -316,13 +329,15 @@ let () =
       let%lwt response = Hyper.run request in
       let response_status = Message.status response in
       (*Print response status*)
-      Format.fprintf formatter "%aHTTP%a/%a1.1 %i%a %a%s%a"
-        Format.pp_open_stag colors.key Format.pp_close_stag ()
-        Format.pp_open_stag colors.key (Status.status_to_int response_status) Format.pp_close_stag ()
-        Format.pp_open_stag colors.header_key (Status.status_to_string response_status) Format.pp_close_stag ();
-      Format.pp_print_newline formatter ();
-      let headers = Message.all_headers response in
-      print_headers formatter headers;
+      if Unix.isatty Unix.stdout then (
+        Format.fprintf formatter "%aHTTP%a/%a1.1 %i%a %a%s%a"
+          Format.pp_open_stag colors.key Format.pp_close_stag ()
+          Format.pp_open_stag colors.key (Status.status_to_int response_status) Format.pp_close_stag ()
+          Format.pp_open_stag colors.header_key (Status.status_to_string response_status) Format.pp_close_stag ();
+        Format.pp_print_newline formatter ();
+        let headers = Message.all_headers response in
+        print_headers formatter headers
+      );
       if response_status <> `OK then
         (*TODO: Handle error responses and show them*)
         raise_response response
@@ -334,20 +349,35 @@ let () =
           | Some ("text", _) | Some ("application", "json") -> let%lwt body = Hyper.body response in Lwt.return(Some body)
           | _ -> Lwt.return_none
         in
-        let () = match content with
+        match content with
           | Some body -> (
             match media_type with
-            | Some ("application", "json") -> Hyper__cli_util.Message_printer.print_json_content ~colors:colors body formatter
+            | Some ("application", "json") -> Hyper__cli_util.Message_printer.print_json_content ~colors:colors body formatter;
+              Lwt.return_unit
             (*TODO: Prettify other content type*)
             | _ ->
               Format.pp_print_string formatter body;
               Format.pp_print_newline formatter ();
-              Format.pp_print_flush formatter ())
-          | None ->
-              print_endline "+-----------------------------------------+";
-              print_endline "| NOTE: binary data not shown in terminal |";
-              print_endline "+-----------------------------------------+"; in
+              Format.pp_print_flush formatter ();
               Lwt.return_unit
+          )
+          | None ->
+              if Unix.isatty Unix.stdout then (
+                print_endline "+-----------------------------------------+";
+                print_endline "| NOTE: binary data not shown in terminal |";
+                print_endline "+-----------------------------------------+";
+                Lwt.return_unit 
+              ) else (
+                let response_stream = Hyper.body_stream response in
+                let rec loop () =
+                  match%lwt Hyper.read response_stream with
+                  | None ->
+                    Hyper.close response_stream
+                  | Some chunk -> print_string chunk;
+                    loop ()
+                in
+                loop ()
+              )
     end
   with
   | Invalid_command_argument msg -> print_error formatter msg
