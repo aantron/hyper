@@ -249,17 +249,28 @@ let apply_color color s = Ansi.(code color) ^ s ^ Ansi.(code none)
 
 let unlimited_bar min_interval =
   let open Progress in
+  let open Progress.Line.Using_int64 in
   let frames =
     let width = 6 in
     List.init width (fun i ->
-        String.concat ""
-          (List.init width (fun x ->
-               if x = i then apply_color (Ansi.fg @@ Color.ansi `cyan) ">"
-               else apply_color Ansi.faint "░")))
+      String.concat ""
+        (List.init width (fun x ->
+          if x = i then apply_color (Ansi.fg @@ Color.ansi `cyan) ">"
+          else apply_color Ansi.faint "░")))
   in
-  (* min_interval doesn't have an effect *)
-  let spin = Line.spinner ~min_interval ~frames () in
-  Line.(const "[" ++ spin ++ spin ++ spin ++ spin ++ spin ++ const "]")
+  let spin = spinner ~min_interval ~frames () in
+  const "[" ++ spin ++ spin ++ spin ++ spin ++ spin ++ const "]" ++ bytes
+
+let bar_with_total total =
+  let open Progress.Line.Using_int64 in
+  list
+    [ spinner ()
+    ; brackets (elapsed ())
+    ; bar ~style:`UTF8 total
+    ; bytes
+    ; bytes_per_sec
+    ; percentage_of total
+    ]
 
 let () =
   let response_body_formatter = Format.std_formatter in
@@ -376,14 +387,17 @@ let () =
       print_headers formatter headers;
 
       if is_stdout_redirected () then (
+        let content_length = match Message.header response "Content-Length" with
+        | None -> None
+        | Some str_value -> Int64.of_string_opt str_value in
         let open Progress in
-        let line = unlimited_bar (Some (Duration.of_int_ms 80)) in
+        let line = match content_length with
+        | None -> unlimited_bar (Some (Duration.of_int_ms 80))
+        | Some total -> bar_with_total total
+        in
         with_reporter (line) (fun (report) ->
-          let progress, set_progress = Lwt_react.S.create 0 in
-          (* The limited signal *)
-          let debounced_progress = Lwt_react.S.limit (fun () -> Lwt_unix.sleep 0.08) progress in
-          (* Limit max frequency of progress bar updates *)
-          let _ = Lwt_react.S.map report debounced_progress in
+          let progress, set_progress = Lwt_react.S.create ~eq:(fun _ _ -> false) 0L in
+          let _ = Lwt_react.S.map report progress in
           let response_stream = Hyper.body_stream response in
           let rec loop count =
             match%lwt Hyper.read response_stream with
@@ -393,12 +407,12 @@ let () =
               Progress.interject_with (fun () ->
                 print_string chunk
               );
-              set_progress count;
+              chunk |> String.length |> Int64.of_int |> set_progress;
               (*TODO: It's for debug purpose. Remove it.*)
-              let%lwt () = Lwt_unix.sleep 0.01 in
-              loop (count + 1)
+              Unix.sleepf 0.01;
+              loop (Int64.add count 1L)
           in
-          loop 1
+          loop 1L
         )
       ) else (
         (*Format and prettify response depending on its type*)
