@@ -77,7 +77,9 @@ type request_specification = {
 }
 
 type flag =
+  | DEBUG
   | VERBOSE
+  | DOWNLOAD
   | JSON
   | FORM
   | HELP
@@ -108,10 +110,12 @@ type option_specification =
   | Flag of string * string * (unit -> flag) * (Format.formatter -> unit)
   
 let option_requirements : option_specification list = [
+  Flag ("-debug", "", (fun () -> DEBUG), (fun (ppf) -> Format.fprintf ppf "Print debug information."));
   Flag ("-json", "j", (fun () -> JSON), (fun (ppf) -> Format.fprintf ppf "(default) Data items from the command line are serialized as a JSON object.@,The Content-Type and Accept headers are set to application/json (if not specified)."));
   Flag ("-form", "f", (fun () -> FORM), (fun (ppf) -> Format.fprintf ppf "Data items from the command line are serialized as form fields.@,The Content-Type is set to application/x-www-form-urlencoded (if not specified).@ The presence of any file fields results in a multipart/form-data request."));
   Flag ("-verbose", "v", (fun () -> VERBOSE), (fun (ppf) -> Format.fprintf ppf "Verbose output. Print the whole request as well as the response."));
   Flag ("-help", "", (fun () -> HELP), (fun (ppf) -> Format.fprintf ppf "Show this help message and exit."));
+  Flag ("-download", "-d", (fun () -> DOWNLOAD), (fun (ppf) -> Format.fprintf ppf "Do not print the response body to stdout. Rather, download it and store it in a file."));
 ]
 
 let colors : Hyper__cli_util.Message_printer.color_scheme = {
@@ -238,10 +242,20 @@ let get_media_type = function
       Some (List.hd mime_type, List.nth mime_type 1)
   | None -> None
 
+let is_stdout_redirected () = Unix.isatty Unix.stdout = false
+
 let () =
-  let formatter = Format.std_formatter in
-  if Unix.isatty Unix.stdout then
+  let response_body_formatter = Format.std_formatter in
+  if is_stdout_redirected () = false then
+    Ocolor_format.prettify_formatter response_body_formatter;
+
+  let formatter =
+    if is_stdout_redirected () then
+      Format.err_formatter
+    else
+      Format.std_formatter in
     Ocolor_format.prettify_formatter formatter;
+
   try 
     let parsed_cmd = parse_command_line Sys.argv 1 initial_command in
     if List.mem HELP parsed_cmd.options.flags then
@@ -257,13 +271,17 @@ let () =
           add_header cmd_with_verb [("Content-Type", "application/x-www-form-urlencoded")]
       else
           add_header cmd_with_verb [("Content-Type", "application/json"); ("Accept", "application/json")]
-    else cmd_with_verb in
+    else cmd_with_verb
+    in
+
     Lwt_main.run begin
       let parsed_uri =  (cmd.request.url |> Uri.of_string |> Uri.with_query') (cmd.request.url_parameters |> List.rev) in
-      if List.mem VERBOSE cmd.options.flags then (
+
+      if List.mem DEBUG cmd.options.flags then (
         Format.fprintf formatter "@{<green>String URI@}: %s%a" cmd.request.url Format.pp_print_newline ();
         Format.fprintf formatter "@{<green>Parsed URI@}: %a%a" Uri.pp parsed_uri Format.pp_print_newline ();
       );
+
       let target_uri =
         let uri_with_default_scheme =
           match Uri.scheme parsed_uri with
@@ -274,10 +292,12 @@ let () =
           | None
           | Some "" -> Uri.with_host uri_with_default_scheme (Some "localhost")
           | Some _ -> uri_with_default_scheme in
-      if List.mem VERBOSE cmd.options.flags then (
+
+      if List.mem DEBUG cmd.options.flags then (
         Format.fprintf formatter "@{<green>Target URI@}: %a%a" Uri.pp target_uri Format.pp_print_newline ();
         Format.pp_print_newline formatter ();
       );
+
       let rec read_stdic out_stream =
         (*Read data from stdin*)
         let%lwt line = Lwt_io.read_line_opt Lwt_io.stdin in
@@ -329,19 +349,26 @@ let () =
       let%lwt response = Hyper.run request in
       let response_status = Message.status response in
       (*Print response status*)
-      if Unix.isatty Unix.stdout then (
-        Format.fprintf formatter "%aHTTP%a/%a1.1 %i%a %a%s%a"
-          Format.pp_open_stag colors.key Format.pp_close_stag ()
-          Format.pp_open_stag colors.key (Status.status_to_int response_status) Format.pp_close_stag ()
-          Format.pp_open_stag colors.header_key (Status.status_to_string response_status) Format.pp_close_stag ();
-        Format.pp_print_newline formatter ();
-        let headers = Message.all_headers response in
-        print_headers formatter headers
-      );
-      if response_status <> `OK then
-        (*TODO: Handle error responses and show them*)
-        raise_response response
-      else
+      Format.fprintf formatter "%aHTTP%a/%a1.1 %i%a %a%s%a"
+        Format.pp_open_stag colors.key Format.pp_close_stag ()
+        (*TODO: Highlight error responses using red color*)
+        Format.pp_open_stag colors.key (Status.status_to_int response_status) Format.pp_close_stag ()
+        Format.pp_open_stag colors.header_key (Status.status_to_string response_status) Format.pp_close_stag ();
+      Format.pp_print_newline formatter ();
+      let headers = Message.all_headers response in
+      print_headers formatter headers;
+
+      if is_stdout_redirected () then (
+        let response_stream = Hyper.body_stream response in
+        let rec loop () =
+          match%lwt Hyper.read response_stream with
+          | None ->
+            Hyper.close response_stream
+          | Some chunk -> print_string chunk;
+            loop ()
+        in
+        loop ()
+      ) else (
         (*Format and prettify response depending on its type*)
         let content_type = Message.header response "Content-Type" in
         let media_type = get_media_type content_type in
@@ -352,32 +379,25 @@ let () =
         match content with
           | Some body -> (
             match media_type with
-            | Some ("application", "json") -> Hyper__cli_util.Message_printer.print_json_content ~colors:colors body formatter;
+            | Some ("application", "json") -> Hyper__cli_util.Message_printer.print_json_content ~colors:colors body response_body_formatter;
               Lwt.return_unit
-            (*TODO: Prettify other content type*)
             | _ ->
-              Format.pp_print_string formatter body;
-              Format.pp_print_newline formatter ();
-              Format.pp_print_flush formatter ();
+              (*TODO: Prettify other content type*)
+              Format.pp_print_string response_body_formatter body;
+              Format.pp_print_newline response_body_formatter ();
+              Format.pp_print_flush response_body_formatter ();
               Lwt.return_unit
           )
           | None ->
-              if Unix.isatty Unix.stdout then (
-                print_endline "+-----------------------------------------+";
-                print_endline "| NOTE: binary data not shown in terminal |";
-                print_endline "+-----------------------------------------+";
-                Lwt.return_unit 
-              ) else (
-                let response_stream = Hyper.body_stream response in
-                let rec loop () =
-                  match%lwt Hyper.read response_stream with
-                  | None ->
-                    Hyper.close response_stream
-                  | Some chunk -> print_string chunk;
-                    loop ()
-                in
-                loop ()
-              )
+              Format.pp_print_string formatter "+-----------------------------------------+";
+              Format.pp_print_newline formatter ();
+              Format.pp_print_string formatter "| NOTE: binary data not shown in terminal |";
+              Format.pp_print_newline formatter ();
+              Format.pp_print_string formatter "+-----------------------------------------+";
+              Format.pp_print_newline formatter ();
+              Format.pp_print_flush formatter ();
+              Lwt.return_unit
+      )
     end
   with
   | Invalid_command_argument msg -> print_error formatter msg
