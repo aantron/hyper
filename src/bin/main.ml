@@ -58,6 +58,7 @@ REQUEST_ITEM
 
 module Message = Dream_pure.Message
 module Status = Dream_pure.Status
+module Ansi = Terminal.Style
 
 exception Invalid_command_argument of string
 (*Raised when the given command line arguments are incorrect.*)
@@ -244,6 +245,22 @@ let get_media_type = function
 
 let is_stdout_redirected () = Unix.isatty Unix.stdout = false
 
+let apply_color color s = Ansi.(code color) ^ s ^ Ansi.(code none)
+
+let unlimited_bar min_interval =
+  let open Progress in
+  let frames =
+    let width = 6 in
+    List.init width (fun i ->
+        String.concat ""
+          (List.init width (fun x ->
+               if x = i then apply_color (Ansi.fg @@ Color.ansi `cyan) ">"
+               else apply_color Ansi.faint "░")))
+  in
+  (* min_interval doesn't have an effect *)
+  let spin = Line.spinner ~min_interval ~frames () in
+  Line.(const "[" ++ spin ++ spin ++ spin ++ spin ++ spin ++ const "]")
+
 let () =
   let response_body_formatter = Format.std_formatter in
   if is_stdout_redirected () = false then
@@ -359,15 +376,30 @@ let () =
       print_headers formatter headers;
 
       if is_stdout_redirected () then (
-        let response_stream = Hyper.body_stream response in
-        let rec loop () =
-          match%lwt Hyper.read response_stream with
-          | None ->
-            Hyper.close response_stream
-          | Some chunk -> print_string chunk;
-            loop ()
-        in
-        loop ()
+        let open Progress in
+        let line = unlimited_bar (Some (Duration.of_int_ms 80)) in
+        with_reporter (line) (fun (report) ->
+          let progress, set_progress = Lwt_react.S.create 0 in
+          (* The limited signal *)
+          let debounced_progress = Lwt_react.S.limit (fun () -> Lwt_unix.sleep 0.08) progress in
+          (* Limit max frequency of progress bar updates *)
+          let _ = Lwt_react.S.map report debounced_progress in
+          let response_stream = Hyper.body_stream response in
+          let rec loop count =
+            match%lwt Hyper.read response_stream with
+            | None ->
+              Hyper.close response_stream
+            | Some chunk ->
+              Progress.interject_with (fun () ->
+                print_string chunk
+              );
+              set_progress count;
+              (*TODO: It's for debug purpose. Remove it.*)
+              let%lwt () = Lwt_unix.sleep 0.01 in
+              loop (count + 1)
+          in
+          loop 1
+        )
       ) else (
         (*Format and prettify response depending on its type*)
         let content_type = Message.header response "Content-Type" in

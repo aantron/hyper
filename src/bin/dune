@@ -5,9 +5,11 @@
   hyper
   lwt
   lwt.unix
+  lwt_react
   uri
   str
   ocolor
+  progress
   yojson
   hyper__cli_util
  )
