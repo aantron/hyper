@@ -267,9 +267,9 @@ let bar_with_total total =
     [ spinner ()
     ; brackets (elapsed ())
     ; bar ~style:`UTF8 total
+    ; percentage_of total
     ; bytes
     ; bytes_per_sec
-    ; percentage_of total
     ]
 
 let () =
@@ -326,15 +326,17 @@ let () =
         Format.pp_print_newline formatter ();
       );
 
-      let rec read_stdic out_stream =
+      let rec pipe_stdin_to out_stream =
         (*Read data from stdin*)
-        let%lwt line = Lwt_io.read_line_opt Lwt_io.stdin in
-        match line with
-        | None -> Hyper.close out_stream
-        | Some chunk ->
-          let%lwt () = Hyper.write out_stream chunk in
+        let length = 4096 in
+        let buffer = Bytes.create length in
+        let%lwt bytes_read = Lwt_io.read_into Lwt_io.stdin buffer 0 length in
+        match bytes_read with
+        | 0 -> Hyper.close out_stream
+        | len ->
+          let%lwt () = Hyper.write out_stream (Bytes.sub_string buffer 0 len) in
           let%lwt () = Hyper.flush out_stream in
-          read_stdic out_stream
+          pipe_stdin_to out_stream
       in
       let request = if Unix.isatty Unix.stdin then
         (*Handle data fields. There are two types of them: string and non-string. First one may be
@@ -368,7 +370,7 @@ let () =
           ?method_:(Some (`Method cmd.request.verb))
           ?headers:(Some cmd.request.headers)
           (Uri.to_string target_uri)
-          (fun (request_stream) -> read_stdic request_stream)
+          (fun (request_stream) -> pipe_stdin_to request_stream)
       in
       if List.mem VERBOSE cmd.options.flags then (
         (*TODO: Print request*)
@@ -396,8 +398,6 @@ let () =
         | Some total -> bar_with_total total
         in
         with_reporter (line) (fun (report) ->
-          let progress, set_progress = Lwt_react.S.create ~eq:(fun _ _ -> false) 0L in
-          let _ = Lwt_react.S.map report progress in
           let response_stream = Hyper.body_stream response in
           let rec loop count =
             match%lwt Hyper.read response_stream with
@@ -407,7 +407,7 @@ let () =
               Progress.interject_with (fun () ->
                 print_string chunk
               );
-              chunk |> String.length |> Int64.of_int |> set_progress;
+              chunk |> String.length |> Int64.of_int |> report;
               (*TODO: It's for debug purpose. Remove it.*)
               Unix.sleepf 0.01;
               loop (Int64.add count 1L)

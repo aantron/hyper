@@ -11,7 +11,9 @@ let () =
         | Some v -> v
       in
       Dream.respond
-        ~headers:["Content-Type", content_type]
+        ~headers:[
+          ("Content-Type", content_type);
+          ("Content-Length", body |> String.length |> Int.to_string)]
         body);
 
   ]
