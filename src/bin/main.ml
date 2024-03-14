@@ -81,6 +81,7 @@ type flag =
   | DEBUG
   | VERBOSE
   | DOWNLOAD
+  | OUTPUT of string
   | JSON
   | FORM
   | HELP
@@ -108,15 +109,36 @@ let initial_command = {
 }
 
 type option_specification =
-  | Flag of string * string * (unit -> flag) * (Format.formatter -> unit)
+  | Flag of string * string * flag * (Format.formatter -> unit)
+  | Setting of string * string * string * (string array -> int -> flag * int) * (Format.formatter -> unit)
   
+let get_next_arg argv pos = 
+  let next_arg = argv.(pos) in (next_arg, pos + 1)
+
 let option_requirements : option_specification list = [
-  Flag ("-debug", "", (fun () -> DEBUG), (fun (ppf) -> Format.fprintf ppf "Print debug information."));
-  Flag ("-json", "j", (fun () -> JSON), (fun (ppf) -> Format.fprintf ppf "(default) Data items from the command line are serialized as a JSON object.@,The Content-Type and Accept headers are set to application/json (if not specified)."));
-  Flag ("-form", "f", (fun () -> FORM), (fun (ppf) -> Format.fprintf ppf "Data items from the command line are serialized as form fields.@,The Content-Type is set to application/x-www-form-urlencoded (if not specified).@ The presence of any file fields results in a multipart/form-data request."));
-  Flag ("-verbose", "v", (fun () -> VERBOSE), (fun (ppf) -> Format.fprintf ppf "Verbose output. Print the whole request as well as the response."));
-  Flag ("-help", "", (fun () -> HELP), (fun (ppf) -> Format.fprintf ppf "Show this help message and exit."));
-  Flag ("-download", "-d", (fun () -> DOWNLOAD), (fun (ppf) -> Format.fprintf ppf "Do not print the response body to stdout. Rather, download it and store it in a file."));
+  Flag ("-debug", "", DEBUG, (fun (ppf) -> Format.fprintf ppf
+    "Print debug information."));
+  Flag ("-json", "j", JSON, (fun (ppf) -> Format.fprintf ppf
+    "(default) Data items from the command line are serialized as a JSON object.@,\
+     The Content-Type and Accept headers are set to application/json (if not specified)."));
+  Flag ("-form", "f", FORM, (fun (ppf) -> Format.fprintf ppf
+    "Data items from the command line are serialized as form fields.@,\
+     The Content-Type is set to application/x-www-form-urlencoded (if not specified).@ \
+     The presence of any file fields results in a multipart/form-data request."));
+  Flag ("-verbose", "v", VERBOSE, (fun (ppf) -> Format.fprintf ppf
+    "Verbose output. Print the whole request as well as the response."));
+  Flag ("-help", "", HELP, (fun (ppf) -> Format.fprintf ppf
+    "Show this help message and exit."));
+  Flag ("-download", "d", DOWNLOAD, (fun (ppf) -> Format.fprintf ppf
+    "Do not print the response body to stdout. Rather, download it and store it in a file."));
+  Setting ("-output", "o", "FILE",
+    (fun argv pos -> match get_next_arg argv pos with
+      | (file_name, next_pos) -> (OUTPUT (file_name), next_pos)
+      | exception Invalid_argument _ -> raise (Invalid_command_argument "--output option requires FILE argument")),
+    (fun (ppf) -> Format.fprintf ppf
+      "Save output to FILE instead of stdout. If --download is also set, then only@ \
+       the response body is saved to FILE. Other parts of the HTTP exchange are@ \
+       printed to stderr."));
 ]
 
 let colors : Hyper__cli_util.Message_printer.color_scheme = {
@@ -142,9 +164,16 @@ let rec parse_command_line argv start command =
 and parse_option argv start command =
   let option_arg = argv.(start) in
   let option_key = String.sub option_arg 1 (String.length option_arg - 1) in
-  match List.find (fun (Flag (long_key, short_key, _, _)) -> long_key = option_key || short_key = option_key) option_requirements with
-  | Flag (_, _, prod_fun, _) ->
-    parse_command_line argv (start + 1) { command with options = { flags = prod_fun () :: command.options.flags }}
+  match List.find
+    (fun (opt) -> match opt with
+      | Flag (long_key, short_key, _, _) | Setting (long_key, short_key, _, _, _) ->
+        long_key = option_key || short_key = option_key)
+    option_requirements with
+  | Flag (_, _, flag, _) ->
+    parse_command_line argv (start + 1) { command with options = { flags = flag :: command.options.flags }}
+  | Setting (_, _, _, prod_fun, _) ->
+    let flag, next_pos = prod_fun argv start in
+    parse_command_line argv (next_pos + 1) { command with options = { flags = flag :: command.options.flags }}
   | exception Not_found -> raise (Invalid_command_argument (Printf.sprintf "Unsupported command option: '-%s'" option_key))
 
 and parse_url argv start command =
@@ -207,19 +236,26 @@ let print_error ppf msg =
   Format.pp_print_string ppf "Run 'hyper --help' to get detailed description.";
   Format.pp_print_newline ppf ()
 
-let print_help ppf =
+let print_help ppf options =
   Format.fprintf ppf "%aUsage%a: hyper [OPTIONS] [METHOD] URL [REQUEST_ITEM [REQUEST_ITEM ...]]"
     Format.pp_open_stag colors.info
     Format.pp_close_stag ();
   Format.pp_print_newline ppf ();
   Format.pp_print_string ppf manual;
   Format.fprintf ppf "OPTIONS@,@;<1 2>@[<hv 0>";
-  List.iter (fun (Flag (long_key, short_key, _, description)) ->
-    Format.fprintf ppf "-%s" long_key;
-    if String.length short_key > 0 then
-      Format.fprintf ppf ", -%s" short_key;
-    Format.fprintf ppf "@;<1 2>@[<hv 0>%t@]@,@," description;
-  ) option_requirements;
+  List.iter
+    (fun (opt) -> match opt with
+      | Flag (long_key, short_key, _, description) ->
+        Format.fprintf ppf "-%s" long_key;
+        if String.length short_key > 0 then
+          Format.fprintf ppf ", -%s" short_key;
+        Format.fprintf ppf "@;<1 2>@[<hv 0>%t@]@,@," description;
+      | Setting (long_key, short_key, key_value_name, _, description) ->
+        Format.fprintf ppf "-%s %s" long_key key_value_name;
+        if String.length short_key > 0 then
+          Format.fprintf ppf ", -%s %s" short_key key_value_name;
+        Format.fprintf ppf "@;<1 2>@[<hv 0>%t@]@,@," description;)
+    options;
   Format.fprintf ppf "@]@."
 
 let rec print_headers ppf headers =
@@ -259,16 +295,18 @@ let unlimited_bar min_interval =
           else apply_color Ansi.faint "░")))
   in
   let spin = spinner ~min_interval ~frames () in
-  const "[" ++ spin ++ spin ++ spin ++ spin ++ spin ++ const "]" ++ bytes
+  const "|" ++ spin ++ spin ++ spin ++ spin ++ spin ++ const "|" ++ bytes ++ bytes_per_sec
 
 let bar_with_total total =
   let open Progress.Line.Using_int64 in
+  let open Progress.Color in
   list
-    [ spinner ()
+    [ const "↓"
+    ; spinner ()
     ; brackets (elapsed ())
-    ; bar ~style:`UTF8 total
-    ; percentage_of total
     ; bytes
+    ; bar ~style:`UTF8 ~color:(hex "#446E9E") total
+    ; percentage_of total
     ; bytes_per_sec
     ]
 
@@ -287,7 +325,7 @@ let () =
   try 
     let parsed_cmd = parse_command_line Sys.argv 1 initial_command in
     if List.mem HELP parsed_cmd.options.flags then
-      print_help formatter
+      print_help formatter option_requirements
     else
     let cmd_with_verb = if String.length parsed_cmd.request.verb == 0 then
       if List.length parsed_cmd.request.data_fields > 0 then
