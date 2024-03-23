@@ -90,7 +90,7 @@ and parse_option argv start command =
     parse_command_line argv (start + 1) { command with options = { flags = flag :: command.options.flags }}
   | Setting (_, _, _, prod_fun, _) ->
     let flag, next_pos = prod_fun argv (start + 1) in
-    parse_command_line argv (next_pos + 1) { command with options = { flags = flag :: command.options.flags }}
+    parse_command_line argv next_pos { command with options = { flags = flag :: command.options.flags }}
   | exception Not_found -> raise (Invalid_command_argument (Printf.sprintf "Unsupported command option: '-%s'" option_key))
 
 and parse_url argv start command =
