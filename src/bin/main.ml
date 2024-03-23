@@ -135,7 +135,75 @@ let get_media_type = function
       Some (List.hd mime_type, List.nth mime_type 1)
   | None -> None
 
-let is_stdout_redirected () = Unix.isatty Unix.stdout = false
+let is_output_redirected (cmd:ArgParser.command) =
+  Unix.isatty Unix.stdout = false
+  || List.mem ArgParser.DOWNLOAD cmd.options.flags
+
+let get_filename_opt = function
+  | Some cd -> let filenames = (cd
+    |> (String.split_on_char ';')
+    |> List.map (fun x -> String.trim x)
+    |> List.find_all (fun x -> String.starts_with ~prefix:"filename" x)
+    |> List.sort (String.compare)) in
+    if List.length filenames > 0 then
+      let filename = filenames |> List.hd |> (String.split_on_char '=') in
+      match List.nth_opt filename 1 with
+      | Some name -> (name |> (String.split_on_char '"') |> List.nth_opt) 1
+      | None -> None
+    else
+      None
+  | None -> None
+
+let get_name_from_uri uri =
+  let path_parts = uri |> Uri.path |> Uri.pct_decode |> (String.split_on_char '/') in
+  let last_part = List.nth path_parts (List.length path_parts - 1) |> String.trim in
+  if String.length last_part == 0 then
+    Option.value (Uri.host uri) ~default:"hyper"
+  else
+    last_part
+
+let get_output_file_name content_disposition_opt content_type_opt (uri:Uri.t) () =
+  let filename_opt = get_filename_opt content_disposition_opt in
+  let origin_filename = match filename_opt with
+  | Some filename -> Filename.basename filename
+  | None ->
+    let name_from_uri = Filename.basename @@ get_name_from_uri uri in
+    let extension = Filename.extension name_from_uri in
+    if String.length extension > 0 then
+      name_from_uri
+    else
+      let media_type = get_media_type content_type_opt in
+      match media_type with
+      | Some (_, ext) -> name_from_uri ^ "." ^ ext
+      | None -> name_from_uri in
+  let exists = ref (Sys.file_exists origin_filename) in
+  let i = ref 0 in
+  while !exists do
+    i := !i + 1;
+    exists := Sys.file_exists @@ Printf.sprintf "%s(%i)%s" (Filename.remove_extension origin_filename) !i (Filename.extension origin_filename);
+  done;
+  if !i > 0 then
+    Printf.sprintf "%s(%i)%s" (Filename.remove_extension origin_filename) !i (Filename.extension origin_filename)
+  else
+    origin_filename
+
+let get_output_channel (cmd:ArgParser.command) get_file_name =
+  if Unix.isatty Unix.stdout = false then
+    stdout
+  else if List.mem ArgParser.DOWNLOAD cmd.options.flags then
+    let flag_opt = List.find_opt (fun flag ->
+      match flag with
+      | ArgParser.OUTPUT _ -> true
+      | _ -> false
+    ) cmd.options.flags in
+    match flag_opt with
+    | Some ArgParser.OUTPUT name -> open_out name
+    | Some _ -> raise (Failure "Flag matching error.")
+    | None ->
+        let name = get_file_name () in
+        open_out name
+  else
+    stdout
 
 let apply_color color s = Ansi.(code color) ^ s ^ Ansi.(code none)
 
@@ -168,18 +236,18 @@ let bar_with_total total =
 
 let () =
   let response_body_formatter = Format.std_formatter in
-  if is_stdout_redirected () = false then
     Ocolor_format.prettify_formatter response_body_formatter;
-
-  let formatter =
-    if is_stdout_redirected () then
-      Format.err_formatter
-    else
-      Format.std_formatter in
-    Ocolor_format.prettify_formatter formatter;
+  let err_formatter = Format.err_formatter in
+      Ocolor_format.prettify_formatter err_formatter;
 
   try 
     let parsed_cmd = ArgParser.parse_command_line Sys.argv 1 initial_command in
+    let formatter =
+      if is_output_redirected parsed_cmd then
+        Format.err_formatter
+      else
+        Format.std_formatter in
+      Ocolor_format.prettify_formatter formatter;
     if List.mem ArgParser.HELP parsed_cmd.options.flags then
       print_help formatter ArgParser.option_requirements
     else
@@ -232,39 +300,40 @@ let () =
           let%lwt () = Hyper.flush out_stream in
           pipe_stdin_to out_stream
       in
-      let request = if Unix.isatty Unix.stdin then
-        (*Handle data fields. There are two types of them: string and non-string. First one may be
-          serialized in two different way: as form data and as json. The second one only as json.*)
-        let body = if List.length cmd.request.data_fields > 0 then
-          if List.mem ArgParser.FORM cmd.options.flags then
-            let data_fields = List.map (fun (d) ->
-              match d with
-              | ArgParser.StringData (key, value) -> (key, [value])
-              | JsonData (key, value) -> (key, [value])
-            ) cmd.request.data_fields in
-            Some (Uri.encoded_of_query data_fields)
-          else
-            let json_data = `Assoc (List.map (fun (d) ->
-              match d with
-              | ArgParser.StringData (key, value) -> (key, `String value)
-              | JsonData (key, value) ->
-                try (key, Yojson.Basic.from_string value)
-                with Yojson.Json_error _ -> raise (ArgParser.Invalid_request_item (Printf.sprintf "Item '%s' has invalid value '%s'" key value))
-            ) cmd.request.data_fields) in
-            Some (Yojson.Basic.to_string json_data)
-        else None
-        in
-        Hyper.request
-          ?method_:(Some (`Method cmd.request.verb))
-          ?headers:(Some cmd.request.headers)
-          ?body:body
-          (Uri.to_string target_uri)
-      else
-        Hyper.stream
-          ?method_:(Some (`Method cmd.request.verb))
-          ?headers:(Some cmd.request.headers)
-          (Uri.to_string target_uri)
-          (fun (request_stream) -> pipe_stdin_to request_stream)
+      let request =
+        if Unix.isatty Unix.stdin then
+          (*Handle data fields. There are two types of them: string and non-string. First one may be
+            serialized in two different way: as form data and as json. The second one only as json.*)
+          let body = if List.length cmd.request.data_fields > 0 then
+            if List.mem ArgParser.FORM cmd.options.flags then
+              let data_fields = List.map (fun (d) ->
+                match d with
+                | ArgParser.StringData (key, value) -> (key, [value])
+                | JsonData (key, value) -> (key, [value])
+              ) cmd.request.data_fields in
+              Some (Uri.encoded_of_query data_fields)
+            else
+              let json_data = `Assoc (List.map (fun (d) ->
+                match d with
+                | ArgParser.StringData (key, value) -> (key, `String value)
+                | JsonData (key, value) ->
+                  try (key, Yojson.Basic.from_string value)
+                  with Yojson.Json_error _ -> raise (ArgParser.Invalid_request_item (Printf.sprintf "Item '%s' has invalid value '%s'" key value))
+              ) cmd.request.data_fields) in
+              Some (Yojson.Basic.to_string json_data)
+          else None
+          in
+          Hyper.request
+            ?method_:(Some (`Method cmd.request.verb))
+            ?headers:(Some cmd.request.headers)
+            ?body:body
+            (Uri.to_string target_uri)
+        else
+          Hyper.stream
+            ?method_:(Some (`Method cmd.request.verb))
+            ?headers:(Some cmd.request.headers)
+            (Uri.to_string target_uri)
+            (fun (request_stream) -> pipe_stdin_to request_stream)
       in
       if List.mem ArgParser.VERBOSE cmd.options.flags then (
         (*TODO: Print request*)
@@ -282,7 +351,10 @@ let () =
       let headers = Message.all_headers response in
       print_headers formatter headers;
 
-      if is_stdout_redirected () then (
+      let content_type = Message.header response "Content-Type" in
+      if is_output_redirected cmd then (
+        let get_file_name = get_output_file_name (Message.header response "Content-Disposition") content_type target_uri in
+        let content_out_channel = get_output_channel cmd get_file_name in
         let content_length = match Message.header response "Content-Length" with
         | None -> None
         | Some str_value -> Int64.of_string_opt str_value in
@@ -296,10 +368,11 @@ let () =
           let rec loop count =
             match%lwt Hyper.read response_stream with
             | None ->
+              close_out content_out_channel;
               Hyper.close response_stream
             | Some chunk ->
               Progress.interject_with (fun () ->
-                print_string chunk
+                Printf.fprintf content_out_channel "%s" chunk
               );
               chunk |> String.length |> Int64.of_int |> report;
               (*TODO: It's for debug purpose. Remove it.*)
@@ -310,35 +383,34 @@ let () =
         )
       ) else (
         (*Format and prettify response depending on its type*)
-        let content_type = Message.header response "Content-Type" in
         let media_type = get_media_type content_type in
         let%lwt content = match media_type with
-          | Some ("text", _) | Some ("application", "json") -> let%lwt body = Hyper.body response in Lwt.return(Some body)
-          | _ -> Lwt.return_none
+        | Some ("text", _) | Some ("application", "json") -> let%lwt body = Hyper.body response in Lwt.return(Some body)
+        | _ -> Lwt.return_none
         in
         match content with
-          | Some body -> (
-            match media_type with
-            | Some ("application", "json") -> Hyper__cli_util.Message_printer.print_json_content ~colors:colors body response_body_formatter;
-              Lwt.return_unit
-            | _ ->
-              (*TODO: Prettify other content type*)
-              Format.pp_print_string response_body_formatter body;
-              Format.pp_print_newline response_body_formatter ();
-              Format.pp_print_flush response_body_formatter ();
-              Lwt.return_unit
-          )
-          | None ->
-              Format.pp_print_string formatter "+-----------------------------------------+";
-              Format.pp_print_newline formatter ();
-              Format.pp_print_string formatter "| NOTE: binary data not shown in terminal |";
-              Format.pp_print_newline formatter ();
-              Format.pp_print_string formatter "+-----------------------------------------+";
-              Format.pp_print_newline formatter ();
-              Format.pp_print_flush formatter ();
-              Lwt.return_unit
+        | Some body -> (
+          match media_type with
+          | Some ("application", "json") -> Hyper__cli_util.Message_printer.print_json_content ~colors:colors body response_body_formatter;
+            Lwt.return_unit
+          | _ ->
+            (*TODO: Prettify other content type*)
+            Format.pp_print_string response_body_formatter body;
+            Format.pp_print_newline response_body_formatter ();
+            Format.pp_print_flush response_body_formatter ();
+            Lwt.return_unit
+        )
+        | None ->
+            Format.pp_print_string formatter "+-----------------------------------------+";
+            Format.pp_print_newline formatter ();
+            Format.pp_print_string formatter "| NOTE: binary data not shown in terminal |";
+            Format.pp_print_newline formatter ();
+            Format.pp_print_string formatter "+-----------------------------------------+";
+            Format.pp_print_newline formatter ();
+            Format.pp_print_flush formatter ();
+            Lwt.return_unit
       )
     end
   with
-  | ArgParser.Invalid_command_argument msg -> print_error formatter msg
-  | ArgParser.Invalid_request_item msg -> print_error formatter msg
+  | ArgParser.Invalid_command_argument msg -> print_error err_formatter msg
+  | ArgParser.Invalid_request_item msg -> print_error err_formatter msg
