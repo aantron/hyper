@@ -105,7 +105,7 @@ let ws socket request =
       Message.response ~status:`Switching_Protocols Stream.empty Stream.null in
     let (_, server_stream) = Message.create_websocket response in
     Lwt.wakeup_later receive_response response;
-    Dream_httpaf.Websocket.client_websocket_handler server_stream socket
+    Dream_httpaf.Websocket.websocket_handler server_stream socket
   in
 
   let%lwt client =
