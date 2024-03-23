@@ -1,0 +1,6 @@
+(library
+ (name hyper__cli_util)
+ (libraries
+  yojson
+ )
+)
